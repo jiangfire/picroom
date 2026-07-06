@@ -54,10 +54,7 @@ impl Processor for ProbeProcessor {
 /// Probe an image and return its dimensions + MIME hint, mutating `ctx`.
 /// Exposed separately for callers that want to update the context
 /// without running the full pipeline.
-pub async fn probe_into(
-    ctx: &mut PipelineContext,
-    input: Bytes,
-) -> Result<(), ProcessorError> {
+pub async fn probe_into(ctx: &mut PipelineContext, input: Bytes) -> Result<(), ProcessorError> {
     let bytes = input;
     let info = tokio::task::spawn_blocking(move || -> Result<(u32, u32, String), String> {
         let reader = ImageReader::new(Cursor::new(bytes.as_ref()))

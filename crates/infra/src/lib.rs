@@ -14,7 +14,7 @@ pub mod logging;
 pub mod telemetry;
 
 pub use cache::Cache;
-pub use clock::{SystemClock};
+pub use clock::SystemClock;
 pub use config::{load_config, load_config_from, Config};
 pub use db::{Database, DbError};
 pub use id::IdGenerator;

@@ -67,7 +67,11 @@ pub async fn upload(
         Ok(i) => i,
         Err(e) => {
             let s = format!("{e}");
-            if s.contains("empty") || s.contains("exceeds") || s.contains("unsupported") || s.contains("probe") {
+            if s.contains("empty")
+                || s.contains("exceeds")
+                || s.contains("unsupported")
+                || s.contains("probe")
+            {
                 return Err(ApiError::bad_request(s));
             }
             return Err(ApiError::from(e));
@@ -108,7 +112,10 @@ pub async fn list(
         cursor: None,
     };
     let owner = params.owner.unwrap_or(state.dev_user.as_uuid());
-    let images = repo.list_for_owner(owner, page).await.map_err(ApiError::from)?;
+    let images = repo
+        .list_for_owner(owner, page)
+        .await
+        .map_err(ApiError::from)?;
 
     let items: Vec<_> = images
         .items
@@ -152,10 +159,7 @@ pub async fn get(
     let Some(repo) = &state.image_repo else {
         return Err(ApiError::internal("image repo not configured"));
     };
-    let image = repo
-        .get(ImageId(id))
-        .await
-        .map_err(ApiError::from)?;
+    let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
     // IDOR check: only owner or admin can view.
     if let Some(user) = auth {
         if user.user_id != image.owner_id && !user.roles.contains(&Role::Admin) {
@@ -182,10 +186,7 @@ pub async fn delete(
     let Some(repo) = &state.image_repo else {
         return Err(ApiError::internal("image repo not configured"));
     };
-    let image = repo
-        .get(ImageId(id))
-        .await
-        .map_err(ApiError::from)?;
+    let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
     // IDOR check: only owner or admin can delete.
     if let Some(user) = auth {
         if user.user_id != image.owner_id && !user.roles.contains(&Role::Admin) {

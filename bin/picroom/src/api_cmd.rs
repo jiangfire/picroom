@@ -31,25 +31,20 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         // Since Storage super-impls StorageWriter, we use the adapter from state.rs.
         Arc::new(picroom_api::StorageWriterFromArc(deps.storage.clone()))
     };
-    let mut upload = picroom_service::UploadService::new(
-        storage_writer,
-        deps.audit.clone(),
-    );
+    let mut upload = picroom_service::UploadService::new(storage_writer, deps.audit.clone());
 
     // Optionally wire job queue.
     if let Some(db) = &deps.db {
         match db {
             DatabaseHandle::Pg(pool) => {
-                let q: Arc<dyn picroom_worker::JobQueue + Send + Sync> = Arc::new(
-                    picroom_worker::db_queue::PgJobQueue::new(pool.clone()),
-                );
+                let q: Arc<dyn picroom_worker::JobQueue + Send + Sync> =
+                    Arc::new(picroom_worker::db_queue::PgJobQueue::new(pool.clone()));
                 upload = upload.with_job_queue(q);
                 tracing::info!("job queue connected (PostgreSQL)");
             }
             DatabaseHandle::Sqlite(pool) => {
-                let q: Arc<dyn picroom_worker::JobQueue + Send + Sync> = Arc::new(
-                    picroom_worker::SqliteJobQueue::new(pool.clone()),
-                );
+                let q: Arc<dyn picroom_worker::JobQueue + Send + Sync> =
+                    Arc::new(picroom_worker::SqliteJobQueue::new(pool.clone()));
                 upload = upload.with_job_queue(q);
                 tracing::info!("job queue connected (SQLite)");
             }
@@ -76,8 +71,9 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
 
     // Build router with body size limit.
     let max_body_bytes = (cfg.server.max_body_mb as usize) * 1024 * 1024;
-    let router = picroom_api::build_router(state)
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes));
+    let router = picroom_api::build_router(state).layer(
+        tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes),
+    );
 
     tracing::info!("picroom api listening on {addr}");
 

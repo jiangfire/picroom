@@ -151,9 +151,7 @@ pub async fn user_create_sqlite(
 }
 
 /// Lists users (Pg).
-pub async fn user_list_pg(
-    pool: &PgPool,
-) -> Result<Vec<(UserId, String, Role)>, UserError> {
+pub async fn user_list_pg(pool: &PgPool) -> Result<Vec<(UserId, String, Role)>, UserError> {
     let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT id, email, role FROM users WHERE disabled = false ORDER BY created_at DESC",
     )
@@ -167,9 +165,7 @@ pub async fn user_list_pg(
 }
 
 /// Lists users (`SQLite`).
-pub async fn user_list_sqlite(
-    pool: &SqlitePool,
-) -> Result<Vec<(UserId, String, Role)>, UserError> {
+pub async fn user_list_sqlite(pool: &SqlitePool) -> Result<Vec<(UserId, String, Role)>, UserError> {
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id, email, role FROM users WHERE disabled = 0 ORDER BY created_at DESC",
     )
@@ -187,11 +183,7 @@ pub async fn user_list_sqlite(
 }
 
 /// Changes a user's role (Pg).
-pub async fn user_set_role_pg(
-    pool: &PgPool,
-    user_id: UserId,
-    role: Role,
-) -> Result<(), UserError> {
+pub async fn user_set_role_pg(pool: &PgPool, user_id: UserId, role: Role) -> Result<(), UserError> {
     sqlx::query("UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2")
         .bind(role.as_str())
         .bind(user_id.as_uuid())
@@ -218,10 +210,7 @@ pub async fn user_set_role_sqlite(
 }
 
 /// Disables a user (Pg).
-pub async fn user_disable_pg(
-    pool: &PgPool,
-    user_id: UserId,
-) -> Result<(), UserError> {
+pub async fn user_disable_pg(pool: &PgPool, user_id: UserId) -> Result<(), UserError> {
     sqlx::query("UPDATE users SET disabled = true, updated_at = NOW() WHERE id = $1")
         .bind(user_id.as_uuid())
         .execute(pool)
@@ -231,10 +220,7 @@ pub async fn user_disable_pg(
 }
 
 /// Disables a user (`SQLite`).
-pub async fn user_disable_sqlite(
-    pool: &SqlitePool,
-    user_id: UserId,
-) -> Result<(), UserError> {
+pub async fn user_disable_sqlite(pool: &SqlitePool, user_id: UserId) -> Result<(), UserError> {
     sqlx::query("UPDATE users SET disabled = 1, updated_at = ?1 WHERE id = ?2")
         .bind(OffsetDateTime::now_utc().to_string())
         .bind(user_id.as_uuid().to_string())

@@ -49,7 +49,10 @@ pub async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
-    (status_code, Json(json!({"status": status, "checks": checks})))
+    (
+        status_code,
+        Json(json!({"status": status, "checks": checks})),
+    )
 }
 
 /// `GET /metrics` — Prometheus metrics endpoint.

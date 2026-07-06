@@ -22,7 +22,5 @@ pub mod error;
 pub mod signing;
 
 pub use any::AnyStorage;
-pub use driver::{
-    ObjectMeta, Storage, StorageLister, StorageReader, StorageSigner, StorageWriter,
-};
+pub use driver::{ObjectMeta, Storage, StorageLister, StorageReader, StorageSigner, StorageWriter};
 pub use error::StorageError;

@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use picroom_domain::{Image, ImageId, StorageKey};
 use picroom_worker::processor::ImageLookup;
-use picroom_worker::{ProcessorDeps, RetryPolicy, WorkerPool};
 use picroom_worker::{Job, JobError, JobQueue, JobResult};
+use picroom_worker::{ProcessorDeps, RetryPolicy, WorkerPool};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,9 +110,9 @@ pub async fn run(config: Option<PathBuf>, concurrency: usize) -> anyhow::Result<
 
     let variant_repo: Option<Arc<dyn picroom_worker::VariantRepository + Send + Sync>> =
         match &deps.db {
-            Some(DatabaseHandle::Pg(pool)) => {
-                Some(Arc::new(picroom_service::PgVariantRepository::new(pool.clone())))
-            }
+            Some(DatabaseHandle::Pg(pool)) => Some(Arc::new(
+                picroom_service::PgVariantRepository::new(pool.clone()),
+            )),
             _ => None,
         };
 
@@ -139,10 +139,7 @@ pub async fn run(config: Option<PathBuf>, concurrency: usize) -> anyhow::Result<
         },
         move |job| {
             let deps = deps_arc.clone();
-            async move {
-                picroom_worker::ImageProcessor::process(&deps, job)
-                    .await
-            }
+            async move { picroom_worker::ImageProcessor::process(&deps, job).await }
         },
     )
     .await;

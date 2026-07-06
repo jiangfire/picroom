@@ -27,7 +27,11 @@ pub async fn get_object<S: S3State>(
         Err(picroom_storage::StorageError::NotFound(_)) => {
             s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key)
         }
-        Err(e) => s3_xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => s3_xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -44,7 +48,11 @@ pub async fn put_object<S: S3State>(
     };
     match state.storage().put(&storage_key, body).await {
         Ok(()) => (StatusCode::OK, [("etag", "\"picroom\"")]).into_response(),
-        Err(e) => s3_xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => s3_xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -60,7 +68,11 @@ pub async fn head_object<S: S3State>(
     match state.storage().exists(&storage_key).await {
         Ok(true) => StatusCode::OK.into_response(),
         Ok(false) => s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key),
-        Err(e) => s3_xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => s3_xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -76,7 +88,11 @@ pub async fn delete_object<S: S3State>(
     match state.storage().delete(&storage_key).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(picroom_storage::StorageError::NotFound(_)) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => s3_xml_error(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()),
+        Err(e) => s3_xml_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        ),
     }
 }
 

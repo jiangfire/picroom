@@ -35,7 +35,10 @@ impl<S: StorageWriter, A: AuditSink> DeleteService<S, A> {
             user_agent: None,
             metadata: serde_json::Value::Null,
         };
-        self.audit.record(&event).await.map_err(crate::ServiceError::Audit)?;
+        self.audit
+            .record(&event)
+            .await
+            .map_err(crate::ServiceError::Audit)?;
         Ok(())
     }
 }

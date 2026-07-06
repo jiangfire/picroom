@@ -1,7 +1,7 @@
 //! Image query use case.
 
-use crate::ServiceError;
 use crate::repo::ImageRepository;
+use crate::ServiceError;
 use bytes::Bytes;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
 use picroom_domain::{DomainError, Image, ImageId, Page, PageReq};

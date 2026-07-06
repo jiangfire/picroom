@@ -36,7 +36,10 @@ impl FromStr for BucketName {
         if s.len() > 63 {
             return Err(BucketError::Invalid("too long".into()));
         }
-        if !s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.') {
+        if !s
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        {
             return Err(BucketError::Invalid("invalid characters".into()));
         }
         Ok(Self(s.to_string()))

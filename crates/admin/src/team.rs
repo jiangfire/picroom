@@ -127,15 +127,12 @@ pub async fn team_add_member_sqlite(
 }
 
 /// Lists teams (Pg).
-pub async fn team_list_pg(
-    pool: &PgPool,
-) -> Result<Vec<(TeamId, String, String)>, TeamError> {
-    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, name, slug FROM teams ORDER BY created_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| TeamError::Db(e.to_string()))?;
+pub async fn team_list_pg(pool: &PgPool) -> Result<Vec<(TeamId, String, String)>, TeamError> {
+    let rows: Vec<(Uuid, String, String)> =
+        sqlx::query_as("SELECT id, name, slug FROM teams ORDER BY created_at DESC")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| TeamError::Db(e.to_string()))?;
     Ok(rows
         .into_iter()
         .map(|(id, name, slug)| (TeamId(id), name, slug))
@@ -146,12 +143,11 @@ pub async fn team_list_pg(
 pub async fn team_list_sqlite(
     pool: &SqlitePool,
 ) -> Result<Vec<(TeamId, String, String)>, TeamError> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id, name, slug FROM teams ORDER BY created_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| TeamError::Db(e.to_string()))?;
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT id, name, slug FROM teams ORDER BY created_at DESC")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| TeamError::Db(e.to_string()))?;
     Ok(rows
         .into_iter()
         .filter_map(|(id, name, slug)| Uuid::parse_str(&id).ok().map(|u| (TeamId(u), name, slug)))

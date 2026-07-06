@@ -93,9 +93,7 @@ async fn build_authorization_url_contains_required_params() {
     let client = HttpOidcClient::discover(provider(&server.uri()))
         .await
         .unwrap();
-    let url = client
-        .authorization_url("state-abc", "nonce-xyz")
-        .unwrap();
+    let url = client.authorization_url("state-abc", "nonce-xyz").unwrap();
     assert!(url.contains("response_type=code"));
     assert!(url.contains(&format!("client_id={CLIENT_ID}")));
     assert!(url.contains("redirect_uri="));

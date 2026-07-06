@@ -168,7 +168,10 @@ mod tests {
     fn admin_can_do_anything() {
         let e = RbacEngine::new();
         assert_eq!(
-            e.check(&[Role::Admin], Permission::new(ResourceType::System, PermissionAction::Admin)),
+            e.check(
+                &[Role::Admin],
+                Permission::new(ResourceType::System, PermissionAction::Admin)
+            ),
             Decision::Allow
         );
     }
@@ -177,7 +180,10 @@ mod tests {
     fn viewer_cannot_create() {
         let e = RbacEngine::new();
         assert_eq!(
-            e.check(&[Role::Viewer], Permission::new(ResourceType::Image, PermissionAction::Create)),
+            e.check(
+                &[Role::Viewer],
+                Permission::new(ResourceType::Image, PermissionAction::Create)
+            ),
             Decision::Deny
         );
     }
@@ -186,7 +192,10 @@ mod tests {
     fn uploader_can_create_image() {
         let e = RbacEngine::new();
         assert_eq!(
-            e.check(&[Role::Uploader], Permission::new(ResourceType::Image, PermissionAction::Create)),
+            e.check(
+                &[Role::Uploader],
+                Permission::new(ResourceType::Image, PermissionAction::Create)
+            ),
             Decision::Allow
         );
     }
@@ -195,7 +204,10 @@ mod tests {
     fn manager_cannot_admin_system() {
         let e = RbacEngine::new();
         assert_eq!(
-            e.check(&[Role::Manager], Permission::new(ResourceType::System, PermissionAction::Admin)),
+            e.check(
+                &[Role::Manager],
+                Permission::new(ResourceType::System, PermissionAction::Admin)
+            ),
             Decision::Deny
         );
     }

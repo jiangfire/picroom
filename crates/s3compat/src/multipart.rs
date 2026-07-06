@@ -24,16 +24,12 @@ pub async fn create_multipart<S: S3State>(
 }
 
 /// `PUT /s3/:bucket/:key?partNumber=N&uploadId=U` — upload part (stub).
-pub async fn upload_part<S: S3State>(
-    State(_state): State<Arc<S>>,
-) -> Response {
+pub async fn upload_part<S: S3State>(State(_state): State<Arc<S>>) -> Response {
     (StatusCode::OK, [("etag", "\"part-etag\"")]).into_response()
 }
 
 /// `POST /s3/:bucket/:key?uploadId=U` — complete multipart (stub).
-pub async fn complete_multipart<S: S3State>(
-    State(_state): State<Arc<S>>,
-) -> Response {
+pub async fn complete_multipart<S: S3State>(State(_state): State<Arc<S>>) -> Response {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 <Location>/s3/bucket/key</Location>
@@ -46,8 +42,6 @@ pub async fn complete_multipart<S: S3State>(
 }
 
 /// `DELETE /s3/:bucket/:key?uploadId=U` — abort multipart (stub).
-pub async fn abort_multipart<S: S3State>(
-    State(_state): State<Arc<S>>,
-) -> Response {
+pub async fn abort_multipart<S: S3State>(State(_state): State<Arc<S>>) -> Response {
     StatusCode::NO_CONTENT.into_response()
 }

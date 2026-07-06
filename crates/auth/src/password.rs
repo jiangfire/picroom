@@ -1,6 +1,8 @@
 //! Argon2id password hashing.
 
-use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier};
+use argon2::{
+    password_hash::SaltString, Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier,
+};
 use rand_core::OsRng;
 use thiserror::Error;
 
@@ -50,8 +52,12 @@ mod tests {
 
     #[test]
     fn hash_then_verify_succeeds() {
-        let h = PasswordHasher::new().hash("correct horse battery staple").unwrap();
-        assert!(PasswordHasher::new().verify("correct horse battery staple", &h).unwrap());
+        let h = PasswordHasher::new()
+            .hash("correct horse battery staple")
+            .unwrap();
+        assert!(PasswordHasher::new()
+            .verify("correct horse battery staple", &h)
+            .unwrap());
         assert!(!PasswordHasher::new().verify("wrong", &h).unwrap());
     }
 

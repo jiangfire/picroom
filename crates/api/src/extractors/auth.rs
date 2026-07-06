@@ -52,8 +52,7 @@ where
             .collect();
 
         let user_id = UserId(
-            Uuid::parse_str(&claims.sub)
-                .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid sub"))?,
+            Uuid::parse_str(&claims.sub).map_err(|_| (StatusCode::UNAUTHORIZED, "invalid sub"))?,
         );
 
         Ok(Self { user_id, roles })

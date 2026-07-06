@@ -16,14 +16,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/readyz", get(super::handlers::system::readyz))
         .route("/metrics", get(super::handlers::system::metrics))
         // Auth (open)
-        .route(
-            "/api/v1/auth/login",
-            post(super::handlers::auth::login),
-        )
-        .route(
-            "/api/v1/auth/logout",
-            post(super::handlers::auth::logout),
-        )
+        .route("/api/v1/auth/login", post(super::handlers::auth::login))
+        .route("/api/v1/auth/logout", post(super::handlers::auth::logout))
         // API v1 (requires auth middleware)
         .route(
             "/api/v1/images",
@@ -33,14 +27,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/images/:id",
             get(super::handlers::images::get).delete(super::handlers::images::delete),
         )
-        .route(
-            "/api/v1/teams",
-            post(super::handlers::teams::create),
-        )
-        .route(
-            "/api/v1/teams/:id",
-            get(super::handlers::teams::get),
-        )
+        .route("/api/v1/teams", post(super::handlers::teams::create))
+        .route("/api/v1/teams/:id", get(super::handlers::teams::get))
         .route(
             "/api/v1/teams/:id/members",
             post(super::handlers::teams::add_member),
@@ -64,14 +52,12 @@ mod tests {
 
     #[tokio::test]
     async fn build_router_returns_router() {
-        let _r = build_router(Arc::new(
-            AppState::for_dev(
-                Arc::new(picroom_storage::driver::LocalDriver::new(
-                    std::path::PathBuf::from("/tmp"),
-                    "/i",
-                )),
-                Arc::new(picroom_audit::NoopAuditSink),
-            ),
-        ));
+        let _r = build_router(Arc::new(AppState::for_dev(
+            Arc::new(picroom_storage::driver::LocalDriver::new(
+                std::path::PathBuf::from("/tmp"),
+                "/i",
+            )),
+            Arc::new(picroom_audit::NoopAuditSink),
+        )));
     }
 }

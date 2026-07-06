@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use picroom_audit::AuditSink;
 use picroom_auth::JwtService;
+use picroom_domain::Page as _Page;
 use picroom_domain::UserId;
 use picroom_service::repo::ImageRepository;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
-use picroom_domain::Page as _Page;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,8 +58,7 @@ impl AppState {
     {
         let storage_arc: Arc<dyn StorageWriter + Send + Sync> =
             Arc::new(StorageWriterFromArc(storage.clone()));
-        let audit_arc: Arc<dyn AuditSink + Send + Sync> =
-            Arc::new(AuditSinkFromArc(audit.clone()));
+        let audit_arc: Arc<dyn AuditSink + Send + Sync> = Arc::new(AuditSinkFromArc(audit.clone()));
         let upload = Arc::new(UploadService::new(storage_arc, audit_arc));
         Self {
             upload,
@@ -112,40 +111,67 @@ pub struct StorageWriterFromArc<S: Storage + ?Sized>(pub Arc<S>);
 
 #[async_trait]
 impl<S: Storage + ?Sized + Send + Sync> StorageWriter for StorageWriterFromArc<S> {
-    async fn put(&self, key: &picroom_domain::StorageKey, bytes: Bytes) -> Result<(), picroom_storage::StorageError> {
+    async fn put(
+        &self,
+        key: &picroom_domain::StorageKey,
+        bytes: Bytes,
+    ) -> Result<(), picroom_storage::StorageError> {
         self.0.put(key, bytes).await
     }
-    async fn delete(&self, key: &picroom_domain::StorageKey) -> Result<(), picroom_storage::StorageError> {
+    async fn delete(
+        &self,
+        key: &picroom_domain::StorageKey,
+    ) -> Result<(), picroom_storage::StorageError> {
         self.0.delete(key).await
     }
 }
 
 #[async_trait]
 impl<S: Storage + ?Sized + Send + Sync> StorageReader for StorageWriterFromArc<S> {
-    async fn get(&self, key: &picroom_domain::StorageKey) -> Result<Bytes, picroom_storage::StorageError> {
+    async fn get(
+        &self,
+        key: &picroom_domain::StorageKey,
+    ) -> Result<Bytes, picroom_storage::StorageError> {
         self.0.get(key).await
     }
-    async fn head(&self, key: &picroom_domain::StorageKey) -> Result<ObjectMeta, picroom_storage::StorageError> {
+    async fn head(
+        &self,
+        key: &picroom_domain::StorageKey,
+    ) -> Result<ObjectMeta, picroom_storage::StorageError> {
         self.0.head(key).await
     }
-    async fn exists(&self, key: &picroom_domain::StorageKey) -> Result<bool, picroom_storage::StorageError> {
+    async fn exists(
+        &self,
+        key: &picroom_domain::StorageKey,
+    ) -> Result<bool, picroom_storage::StorageError> {
         self.0.exists(key).await
     }
 }
 
 #[async_trait]
 impl<S: Storage + ?Sized + Send + Sync> StorageLister for StorageWriterFromArc<S> {
-    async fn list(&self, prefix: &picroom_domain::StorageKey) -> Result<_Page<ObjectMeta>, picroom_storage::StorageError> {
+    async fn list(
+        &self,
+        prefix: &picroom_domain::StorageKey,
+    ) -> Result<_Page<ObjectMeta>, picroom_storage::StorageError> {
         self.0.list(prefix).await
     }
 }
 
 #[async_trait]
 impl<S: Storage + ?Sized + Send + Sync> StorageSigner for StorageWriterFromArc<S> {
-    async fn sign_get_url(&self, key: &picroom_domain::StorageKey, ttl: Duration) -> Result<Url, picroom_storage::StorageError> {
+    async fn sign_get_url(
+        &self,
+        key: &picroom_domain::StorageKey,
+        ttl: Duration,
+    ) -> Result<Url, picroom_storage::StorageError> {
         self.0.sign_get_url(key, ttl).await
     }
-    async fn sign_put_url(&self, key: &picroom_domain::StorageKey, ttl: Duration) -> Result<Url, picroom_storage::StorageError> {
+    async fn sign_put_url(
+        &self,
+        key: &picroom_domain::StorageKey,
+        ttl: Duration,
+    ) -> Result<Url, picroom_storage::StorageError> {
         self.0.sign_put_url(key, ttl).await
     }
 }
@@ -155,7 +181,10 @@ pub struct AuditSinkFromArc<A: AuditSink + ?Sized>(Arc<A>);
 
 #[async_trait]
 impl<A: AuditSink + ?Sized + Send + Sync> AuditSink for AuditSinkFromArc<A> {
-    async fn record(&self, event: &picroom_audit::AuditEvent) -> Result<(), picroom_audit::sink::AuditSinkError> {
+    async fn record(
+        &self,
+        event: &picroom_audit::AuditEvent,
+    ) -> Result<(), picroom_audit::sink::AuditSinkError> {
         self.0.record(event).await
     }
 }

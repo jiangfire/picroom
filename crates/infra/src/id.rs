@@ -29,6 +29,9 @@ mod tests {
         let b = g.next();
         assert_ne!(a, b);
         // UUID v7 embeds timestamp; later IDs sort lexicographically by time.
-        assert!(b.as_bytes() >= a.as_bytes(), "v7 IDs should be time-ordered");
+        assert!(
+            b.as_bytes() >= a.as_bytes(),
+            "v7 IDs should be time-ordered"
+        );
     }
 }

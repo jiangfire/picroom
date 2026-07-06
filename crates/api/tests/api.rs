@@ -76,8 +76,7 @@ async fn readyz_returns_ok_or_503() {
         .unwrap();
     // In dev mode without a DB, readyz returns 503. That's OK.
     assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::SERVICE_UNAVAILABLE,
+        response.status() == StatusCode::OK || response.status() == StatusCode::SERVICE_UNAVAILABLE,
         "got {:?}",
         response.status()
     );
@@ -106,7 +105,10 @@ async fn upload_then_lists_in_response() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/images")
-                .header(CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .header("authorization", &auth)
                 .body(Body::from(body))
                 .unwrap(),
@@ -163,7 +165,10 @@ async fn upload_without_file_field_returns_400() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/images")
-                .header(CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .header("authorization", bearer_token())
                 .body(Body::from(body))
                 .unwrap(),
@@ -191,7 +196,10 @@ async fn upload_empty_bytes_returns_400() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/images")
-                .header(CONTENT_TYPE, format!("multipart/form-data; boundary={boundary}"))
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
                 .header("authorization", bearer_token())
                 .body(Body::from(body))
                 .unwrap(),

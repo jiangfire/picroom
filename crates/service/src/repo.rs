@@ -120,13 +120,11 @@ impl ImageRepository for PgImageRepository {
     }
 
     async fn delete(&self, id: ImageId) -> Result<(), ServiceError> {
-        sqlx::query(
-            r"UPDATE images SET status = 'deleted', updated_at = NOW() WHERE id = $1",
-        )
-        .bind(id.as_uuid())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| ServiceError::Internal(format!("delete image: {e}")))?;
+        sqlx::query(r"UPDATE images SET status = 'deleted', updated_at = NOW() WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("delete image: {e}")))?;
         Ok(())
     }
 }

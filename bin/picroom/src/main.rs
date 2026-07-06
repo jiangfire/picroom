@@ -103,8 +103,7 @@ enum ConfigCmd {
 }
 
 fn num_cpus() -> usize {
-    std::thread::available_parallelism()
-        .map_or(4, std::num::NonZero::get)
+    std::thread::available_parallelism().map_or(4, std::num::NonZero::get)
 }
 
 #[tokio::main]
@@ -138,21 +137,23 @@ async fn main() -> ExitCode {
                 "migrate {action:?} not implemented in skeleton"
             )),
         },
-    Command::Admin(AdminCmd::User(cmd)) => run_user_cmd(cmd)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}")),
-        Command::Admin(AdminCmd::Team(cmd)) => run_team_cmd(cmd)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}")),
-        Command::Admin(AdminCmd::Audit { follow, actor }) => match picroom_admin::audit_tail(follow, actor).await {
-            Ok(events) => {
-                for ev in events {
-                    println!("{} {}", ev.timestamp, ev.action.as_str());
+        Command::Admin(AdminCmd::User(cmd)) => {
+            run_user_cmd(cmd).await.map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        Command::Admin(AdminCmd::Team(cmd)) => {
+            run_team_cmd(cmd).await.map_err(|e| anyhow::anyhow!("{e}"))
+        }
+        Command::Admin(AdminCmd::Audit { follow, actor }) => {
+            match picroom_admin::audit_tail(follow, actor).await {
+                Ok(events) => {
+                    for ev in events {
+                        println!("{} {}", ev.timestamp, ev.action.as_str());
+                    }
+                    Ok(())
                 }
-                Ok(())
+                Err(e) => Err(anyhow::anyhow!("{e}")),
             }
-            Err(e) => Err(anyhow::anyhow!("{e}")),
-        },
+        }
         Command::Admin(AdminCmd::Config(cmd)) => match cmd {
             ConfigCmd::Print => picroom_admin::config_print().map_err(|e| anyhow::anyhow!("{e}")),
             ConfigCmd::Validate => {
@@ -161,9 +162,7 @@ async fn main() -> ExitCode {
         },
         Command::Admin(AdminCmd::StorageTest { policy: _ }) => {
             // Placeholder: real impl reads storage config and constructs driver.
-            Err(anyhow::anyhow!(
-                "storage test not implemented in skeleton"
-            ))
+            Err(anyhow::anyhow!("storage test not implemented in skeleton"))
         }
     };
 
@@ -176,10 +175,9 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn open_db(
-    config_path: Option<&std::path::Path>,
-) -> anyhow::Result<picroom_infra::Database> {
-    let cfg = picroom_infra::load_config_from(config_path).map_err(|e| anyhow::anyhow!("config: {e}"))?;
+async fn open_db(config_path: Option<&std::path::Path>) -> anyhow::Result<picroom_infra::Database> {
+    let cfg =
+        picroom_infra::load_config_from(config_path).map_err(|e| anyhow::anyhow!("config: {e}"))?;
     picroom_infra::Database::connect(&cfg.database.url)
         .await
         .map_err(|e| anyhow::anyhow!("db: {e}"))
@@ -195,9 +193,7 @@ fn parse_role(s: &str) -> picroom_auth::Role {
     }
 }
 
-async fn run_user_cmd(
-    cmd: picroom_admin::UserCmd,
-) -> anyhow::Result<()> {
+async fn run_user_cmd(cmd: picroom_admin::UserCmd) -> anyhow::Result<()> {
     use picroom_admin::user::{
         user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
     };
@@ -211,16 +207,15 @@ async fn run_user_cmd(
         }
     };
     match cmd {
-        picroom_admin::UserCmd::Create { email, name, password, role } => {
-            let _id = user_create_sqlite(
-                &pool,
-                email,
-                name,
-                password,
-                parse_role(&role),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        picroom_admin::UserCmd::Create {
+            email,
+            name,
+            password,
+            role,
+        } => {
+            let _id = user_create_sqlite(&pool, email, name, password, parse_role(&role))
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("user created");
             Ok(())
         }
@@ -233,27 +228,19 @@ async fn run_user_cmd(
             }
             Ok(())
         }
-        picroom_admin::UserCmd::SetRole { user_id, role } => user_set_role_sqlite(
-            &pool,
-            user_id,
-            parse_role(&role),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}")),
-        picroom_admin::UserCmd::Disable { user_id } => {
-            user_disable_sqlite(&pool, user_id)
+        picroom_admin::UserCmd::SetRole { user_id, role } => {
+            user_set_role_sqlite(&pool, user_id, parse_role(&role))
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))
         }
+        picroom_admin::UserCmd::Disable { user_id } => user_disable_sqlite(&pool, user_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}")),
     }
 }
 
-async fn run_team_cmd(
-    cmd: picroom_admin::TeamCmd,
-) -> anyhow::Result<()> {
-    use picroom_admin::team::{
-        team_add_member_sqlite, team_create_sqlite, team_list_sqlite,
-    };
+async fn run_team_cmd(cmd: picroom_admin::TeamCmd) -> anyhow::Result<()> {
+    use picroom_admin::team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite};
     let url = std::env::var("PICROOM_DATABASE__URL")
         .map_err(|_| anyhow::anyhow!("PICROOM_DATABASE__URL must be set"))?;
     let pool = picroom_admin::user::open_pool(&url).await?;
@@ -280,10 +267,12 @@ async fn run_team_cmd(
             }
             Ok(())
         }
-        picroom_admin::TeamCmd::AddMember { team_id, user_id, role } => {
-            team_add_member_sqlite(&pool, team_id, user_id, parse_role(&role))
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        }
+        picroom_admin::TeamCmd::AddMember {
+            team_id,
+            user_id,
+            role,
+        } => team_add_member_sqlite(&pool, team_id, user_id, parse_role(&role))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}")),
     }
 }

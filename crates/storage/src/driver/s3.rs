@@ -108,8 +108,9 @@ impl S3Driver {
     }
 
     fn resolve_base_url(config: &S3Config) -> Result<Url, StorageError> {
-        if let Some(ep) = &config.endpoint { Url::parse(ep)
-        .map_err(|e| StorageError::Config(format!("endpoint parse: {e}"))) } else {
+        if let Some(ep) = &config.endpoint {
+            Url::parse(ep).map_err(|e| StorageError::Config(format!("endpoint parse: {e}")))
+        } else {
             let host = format!("s3.{}.amazonaws.com", config.region);
             Url::parse(&format!("https://{host}"))
                 .map_err(|e| StorageError::Config(format!("endpoint parse: {e}")))
@@ -117,7 +118,7 @@ impl S3Driver {
     }
 
     /// Builds the URL for a (bucket, key) pair, honouring `path_style`.
-    pub     fn object_url(&self, bucket: &str, key: &str) -> Result<Url, StorageError> {
+    pub fn object_url(&self, bucket: &str, key: &str) -> Result<Url, StorageError> {
         // URL-encode each segment, preserving `/`.
         let key_path: String = key
             .split('/')
@@ -199,9 +200,7 @@ impl S3Driver {
         signed_names: &str,
         signature: &str,
     ) -> String {
-        let credential = format!(
-            "{access_key}/{date_stamp}/{region}/{service}/aws4_request"
-        );
+        let credential = format!("{access_key}/{date_stamp}/{region}/{service}/aws4_request");
         format!(
             "AWS4-HMAC-SHA256 Credential={credential}, SignedHeaders={signed_names}, Signature={signature}"
         )
@@ -283,9 +282,7 @@ impl S3Driver {
             .collect::<Vec<_>>()
             .join(";");
 
-        let mut headers: Vec<(String, String)> = signed_headers
-            .into_iter()
-            .collect();
+        let mut headers: Vec<(String, String)> = signed_headers.into_iter().collect();
         let auth = Self::authorization_header(
             &self.config.access_key_id,
             &self.config.region,
@@ -322,8 +319,7 @@ fn percent_encode_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
         let c = b as char;
-        let unreserved =
-            c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~');
+        let unreserved = c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~');
         if unreserved {
             out.push(c);
         } else {
@@ -353,10 +349,7 @@ impl StorageWriter for S3Driver {
     async fn put(&self, key: &StorageKey, bytes: Bytes) -> Result<(), StorageError> {
         let url = self.object_url(&self.config.bucket, key.as_str())?;
         let headers = self.sign_request("PUT", &url, &bytes, &[]);
-        let mut req = self
-            .http
-            .put(url)
-            .body(bytes.to_vec());
+        let mut req = self.http.put(url).body(bytes.to_vec());
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
@@ -452,7 +445,11 @@ impl StorageReader for S3Driver {
             return Err(StorageError::NotFound(key.as_str().to_string()));
         }
         if !status.is_success() {
-            return Err(StorageError::Backend(format!("HEAD {}: {}", key.as_str(), status)));
+            return Err(StorageError::Backend(format!(
+                "HEAD {}: {}",
+                key.as_str(),
+                status
+            )));
         }
         let len = resp
             .headers()
@@ -469,9 +466,7 @@ impl StorageReader for S3Driver {
                 use chrono::DateTime;
                 DateTime::parse_from_rfc2822(s)
                     .ok()
-                    .and_then(|d| {
-                        OffsetDateTime::from_unix_timestamp(d.timestamp()).ok()
-                    })
+                    .and_then(|d| OffsetDateTime::from_unix_timestamp(d.timestamp()).ok())
             })
             .unwrap_or_else(OffsetDateTime::now_utc);
         Ok(ObjectMeta {
@@ -526,7 +521,9 @@ impl StorageLister for S3Driver {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(StorageError::Backend(format!("LIST failed: {status} - {body}")));
+            return Err(StorageError::Backend(format!(
+                "LIST failed: {status} - {body}"
+            )));
         }
         let body = resp
             .text()
@@ -575,11 +572,7 @@ impl StorageLister for S3Driver {
 
 #[async_trait]
 impl StorageSigner for S3Driver {
-    async fn sign_get_url(
-        &self,
-        key: &StorageKey,
-        ttl: Duration,
-    ) -> Result<Url, StorageError> {
+    async fn sign_get_url(&self, key: &StorageKey, ttl: Duration) -> Result<Url, StorageError> {
         // X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=…&X-Amz-Date=…&X-Amz-SignedHeaders=host&X-Amz-Signature=…
         let now = OffsetDateTime::now_utc();
         let expires = ttl.as_secs().min(604800); // S3 max 7 days
@@ -654,14 +647,8 @@ impl StorageSigner for S3Driver {
         Ok(url)
     }
 
-    async fn sign_put_url(
-        &self,
-        key: &StorageKey,
-        ttl: Duration,
-    ) -> Result<Url, StorageError> {
-        let mut url = self
-            .sign_get_url(key, ttl)
-            .await?;
+    async fn sign_put_url(&self, key: &StorageKey, ttl: Duration) -> Result<Url, StorageError> {
+        let mut url = self.sign_get_url(key, ttl).await?;
         let q = url.query_pairs_mut();
         // The signed-headers list already includes `host`; the algorithm
         // works for both GET and PUT (only the method changes inside the
@@ -784,8 +771,8 @@ mod tests {
     fn sign_request_includes_canonical_query_param_ordering() {
         // Two URLs that differ only in query order should yield the same
         // canonical string (since we sort params during canonicalisation).
-        let cfg = S3Config::new("bk", "us-east-1", "AK", "SK")
-            .with_endpoint("http://localhost:9000");
+        let cfg =
+            S3Config::new("bk", "us-east-1", "AK", "SK").with_endpoint("http://localhost:9000");
         let d = S3Driver::from_parts(
             Arc::new(cfg),
             reqwest::Client::new(),

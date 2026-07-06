@@ -1,6 +1,8 @@
 //! JWT issuing and verification.
 
-use jsonwebtoken::{decode, encode, errors::ErrorKind as JwtErrorKind, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{
+    decode, encode, errors::ErrorKind as JwtErrorKind, DecodingKey, EncodingKey, Header, Validation,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -51,7 +53,12 @@ pub struct JwtService {
 
 impl JwtService {
     /// Creates a new JWT service.
-    pub fn new(secret: impl Into<String>, issuer: impl Into<String>, audience: impl Into<String>, ttl_seconds: i64) -> Self {
+    pub fn new(
+        secret: impl Into<String>,
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        ttl_seconds: i64,
+    ) -> Self {
         Self {
             secret: secret.into(),
             issuer: issuer.into(),
@@ -71,8 +78,12 @@ impl JwtService {
             exp: now + self.ttl_seconds,
             scopes: Vec::new(),
         };
-        encode(&Header::default(), &claims, &EncodingKey::from_secret(self.secret.as_bytes()))
-            .map_err(|e| JwtError::Encode(e.to_string()))
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(self.secret.as_bytes()),
+        )
+        .map_err(|e| JwtError::Encode(e.to_string()))
     }
 
     /// Verifies and decodes a JWT.
@@ -80,7 +91,11 @@ impl JwtService {
         let mut validation = Validation::default();
         validation.set_audience(&[&self.audience]);
         validation.set_issuer(&[&self.issuer]);
-        match decode::<JwtClaims>(token, &DecodingKey::from_secret(self.secret.as_bytes()), &validation) {
+        match decode::<JwtClaims>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &validation,
+        ) {
             Ok(data) => Ok(data.claims),
             Err(e) => match e.kind() {
                 JwtErrorKind::ExpiredSignature => Err(JwtError::Expired),

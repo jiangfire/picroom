@@ -30,9 +30,9 @@ pub struct ParsedAuth {
 
 /// Parses an `Authorization: AWS4-HMAC-SHA256 …` header.
 pub fn parse_authz(header: &str) -> Result<ParsedAuth, S3Error> {
-    let header = header.strip_prefix("AWS4-HMAC-SHA256 ").ok_or(S3Error::BadRequest(
-        "unsupported algorithm".into(),
-    ))?;
+    let header = header
+        .strip_prefix("AWS4-HMAC-SHA256 ")
+        .ok_or(S3Error::BadRequest("unsupported algorithm".into()))?;
 
     let algorithm = String::from("AWS4-HMAC-SHA256");
     let mut access_key = String::new();
@@ -111,9 +111,7 @@ pub fn string_to_sign(
     let mut hasher = Sha256::new();
     hasher.update(canonical_req.as_bytes());
     let hashed = hex_lower(&hasher.finalize());
-    format!(
-        "{algorithm}\n{amz_date}\n{date_scope}\n{hashed}"
-    )
+    format!("{algorithm}\n{amz_date}\n{date_scope}\n{hashed}")
 }
 
 /// Derives the signing key from secret + date + region + service.
@@ -174,7 +172,10 @@ pub fn verify(
     secret_access_key: &str,
     amz_date: &str,
 ) -> Result<(), S3Error> {
-    let date_scope = format!("{}/{}/{}/aws4_request", parsed.date, parsed.region, parsed.service);
+    let date_scope = format!(
+        "{}/{}/{}/aws4_request",
+        parsed.date, parsed.region, parsed.service
+    );
     let canonical = canonical_request(
         method,
         canonical_uri,
@@ -184,7 +185,12 @@ pub fn verify(
         payload_hash,
     );
     let s2s = string_to_sign(&parsed.algorithm, amz_date, &date_scope, &canonical);
-    let key = derive_signing_key(secret_access_key, &parsed.date, &parsed.region, &parsed.service);
+    let key = derive_signing_key(
+        secret_access_key,
+        &parsed.date,
+        &parsed.region,
+        &parsed.service,
+    );
     let expected = sign(&key, &s2s);
     if expected.eq_ignore_ascii_case(&parsed.signature) {
         Ok(())
@@ -263,7 +269,10 @@ mod tests {
         assert_eq!(parsed.date, "20150830");
         assert_eq!(parsed.region, "us-east-1");
         assert_eq!(parsed.service, "s3");
-        assert_eq!(parsed.signed_headers, vec!["host", "range", "x-amz-content-sha256", "x-amz-date"]);
+        assert_eq!(
+            parsed.signed_headers,
+            vec!["host", "range", "x-amz-content-sha256", "x-amz-date"]
+        );
         assert_eq!(parsed.signature.len(), 64);
     }
 
@@ -307,7 +316,10 @@ mod tests {
         let payload_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         let amz_date = "20240101T000000Z";
 
-        let date_scope = format!("{}/{}/{}/aws4_request", parsed.date, parsed.region, parsed.service);
+        let date_scope = format!(
+            "{}/{}/{}/aws4_request",
+            parsed.date, parsed.region, parsed.service
+        );
         let canonical = canonical_request(
             method,
             uri,

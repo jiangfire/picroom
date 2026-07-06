@@ -65,7 +65,10 @@ async fn upload_rejects_empty_payload() {
     let svc = UploadService::new(Arc::new(driver), Arc::new(audit));
 
     let owner = UserId(Uuid::now_v7());
-    let err = svc.upload(owner, "image/png", Bytes::new()).await.unwrap_err();
+    let err = svc
+        .upload(owner, "image/png", Bytes::new())
+        .await
+        .unwrap_err();
     assert!(format!("{err}").contains("empty"));
 }
 

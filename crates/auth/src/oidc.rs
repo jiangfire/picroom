@@ -360,7 +360,11 @@ mod tests {
             insecure_skip_verify: false,
         };
         let scopes = if cfg.scopes.is_empty() {
-            vec!["openid".to_string(), "email".to_string(), "profile".to_string()]
+            vec![
+                "openid".to_string(),
+                "email".to_string(),
+                "profile".to_string(),
+            ]
         } else {
             cfg.scopes.clone()
         };

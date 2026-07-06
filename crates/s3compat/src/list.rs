@@ -41,11 +41,13 @@ pub async fn list_objects_v2<S: S3State>(
             let items: Vec<String> = page
                 .items
                 .iter()
-                .map(|m| format!(
-                    r"<Contents><Key>{}</Key><Size>{}</Size></Contents>",
-                    m.key.as_str(),
-                    m.bytes
-                ))
+                .map(|m| {
+                    format!(
+                        r"<Contents><Key>{}</Key><Size>{}</Size></Contents>",
+                        m.key.as_str(),
+                        m.bytes
+                    )
+                })
                 .collect();
 
             let xml = format!(

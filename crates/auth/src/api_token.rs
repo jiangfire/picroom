@@ -56,7 +56,14 @@ impl ApiTokenService {
             Alphanumeric.sample_string(&mut rand::thread_rng(), 40)
         );
         let hash = hex_sha256(&raw);
-        let last_four = raw.chars().rev().take(4).collect::<String>().chars().rev().collect();
+        let last_four = raw
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         let token = ApiToken {
             id: Uuid::now_v7(),
             user_id,

@@ -40,7 +40,10 @@ impl LocalDriver {
         let path = self.root.join(key.as_str());
         // Defence-in-depth: reject any path that escapes the root.
         if let Ok(canonical) = path.canonicalize() {
-            let canonical_root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+            let canonical_root = self
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| self.root.clone());
             if !canonical.starts_with(&canonical_root) {
                 return Err(StorageError::PermissionDenied(format!(
                     "path escapes root: {}",
@@ -66,7 +69,10 @@ impl StorageReader for LocalDriver {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Err(StorageError::NotFound(key.as_str().to_string()))
             }
-            Err(e) => Err(StorageError::Backend(format!("read {}: {e}", path.display()))),
+            Err(e) => Err(StorageError::Backend(format!(
+                "read {}: {e}",
+                path.display()
+            ))),
         }
     }
 
@@ -78,13 +84,17 @@ impl StorageReader for LocalDriver {
                 return Err(StorageError::NotFound(key.as_str().to_string()));
             }
             Err(e) => {
-                return Err(StorageError::Backend(format!("stat {}: {e}", path.display())));
+                return Err(StorageError::Backend(format!(
+                    "stat {}: {e}",
+                    path.display()
+                )));
             }
         };
         let modified = meta
             .modified()
             .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or_else(OffsetDateTime::now_utc, |d| {
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or_else(OffsetDateTime::now_utc, |d| {
                 OffsetDateTime::from_unix_timestamp(d.as_secs() as i64)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc())
             });
@@ -140,7 +150,10 @@ impl StorageWriter for LocalDriver {
         match fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(StorageError::Backend(format!("remove {}: {e}", path.display()))),
+            Err(e) => Err(StorageError::Backend(format!(
+                "remove {}: {e}",
+                path.display()
+            ))),
         }
     }
 }
@@ -220,7 +233,8 @@ async fn collect_recursive(
             let modified = meta
                 .modified()
                 .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or_else(OffsetDateTime::now_utc, |d| {
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or_else(OffsetDateTime::now_utc, |d| {
                     OffsetDateTime::from_unix_timestamp(d.as_secs() as i64)
                         .unwrap_or_else(|_| OffsetDateTime::now_utc())
                 });
@@ -238,11 +252,7 @@ async fn collect_recursive(
 
 #[async_trait]
 impl StorageSigner for LocalDriver {
-    async fn sign_get_url(
-        &self,
-        key: &StorageKey,
-        _ttl: Duration,
-    ) -> Result<Url, StorageError> {
+    async fn sign_get_url(&self, key: &StorageKey, _ttl: Duration) -> Result<Url, StorageError> {
         Ok(Url::parse(&format!(
             "{}/{}",
             self.url_prefix.trim_end_matches('/'),
@@ -250,11 +260,7 @@ impl StorageSigner for LocalDriver {
         ))?)
     }
 
-    async fn sign_put_url(
-        &self,
-        key: &StorageKey,
-        _ttl: Duration,
-    ) -> Result<Url, StorageError> {
+    async fn sign_put_url(&self, key: &StorageKey, _ttl: Duration) -> Result<Url, StorageError> {
         Ok(Url::parse(&format!(
             "{}/{}",
             self.url_prefix.trim_end_matches('/'),
@@ -329,10 +335,8 @@ mod tests {
     }
 
     fn tempdir() -> PathBuf {
-        let base = std::env::temp_dir().join(format!(
-            "picroom-local-driver-{}",
-            uuid::Uuid::now_v7()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("picroom-local-driver-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&base).unwrap();
         base
     }

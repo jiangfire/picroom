@@ -1,9 +1,7 @@
 //! Integration tests for the admin CLI against an in-memory SQLite
 //! database with the production schema (subset).
 
-use picroom_admin::team::{
-    team_add_member_sqlite, team_create_sqlite, team_list_sqlite,
-};
+use picroom_admin::team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite};
 use picroom_admin::user::{
     user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
 };
@@ -56,10 +54,7 @@ async fn make_pool() -> SqlitePool {
             PRIMARY KEY (team_id, user_id)
         )",
     ] {
-        sqlx::query(stmt)
-            .execute(&pool)
-            .await
-            .expect(stmt);
+        sqlx::query(stmt).execute(&pool).await.expect(stmt);
     }
     pool
 }
@@ -92,9 +87,7 @@ async fn create_list_set_role_disable_user() {
     assert_eq!(list[0].2, Role::Admin);
 
     // Disable and re-list — disabled users are excluded by the list query.
-    user_disable_sqlite(&pool, alice_id)
-        .await
-        .expect("disable");
+    user_disable_sqlite(&pool, alice_id).await.expect("disable");
     let list = user_list_sqlite(&pool).await.expect("list");
     assert_eq!(list.len(), 0, "disabled user hidden");
 }

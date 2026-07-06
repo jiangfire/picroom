@@ -84,9 +84,7 @@ impl From<picroom_service::ServiceError> for ApiError {
             picroom_service::ServiceError::QuotaExceeded(_, _) => {
                 Self::quota_exceeded(e.to_string())
             }
-            picroom_service::ServiceError::PermissionDenied => {
-                Self::forbidden("permission denied")
-            }
+            picroom_service::ServiceError::PermissionDenied => Self::forbidden("permission denied"),
             picroom_service::ServiceError::Domain(d) => match d {
                 picroom_domain::DomainError::NotFound => Self::not_found("not found"),
                 picroom_domain::DomainError::PermissionDenied => Self::forbidden("forbidden"),

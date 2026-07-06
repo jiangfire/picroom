@@ -212,7 +212,9 @@ pub struct AuditConfig {
 
 impl Default for AuditConfig {
     fn default() -> Self {
-        Self { retention_days: 365 }
+        Self {
+            retention_days: 365,
+        }
     }
 }
 
@@ -275,7 +277,8 @@ pub fn load_config_from<P: AsRef<std::path::Path>>(path: Option<P>) -> Result<Co
         fig = fig.merge(Toml::file(p));
     }
     fig = fig.merge(Env::prefixed("PICROOM_").split("__"));
-    fig.extract().map_err(|e| ConfigError::Figment(e.to_string()))
+    fig.extract()
+        .map_err(|e| ConfigError::Figment(e.to_string()))
 }
 
 #[cfg(test)]

@@ -40,7 +40,7 @@ impl Database {
                 .await
                 .map_err(|e| DbError::Postgres(e.to_string()))?;
             Ok(Self::Postgres(pool))
-        }else if url.starts_with("sqlite://") {
+        } else if url.starts_with("sqlite://") {
             let pool = SqlitePoolOptions::new()
                 .max_connections(5)
                 .connect(url)

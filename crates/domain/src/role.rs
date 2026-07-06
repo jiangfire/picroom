@@ -39,8 +39,8 @@ impl RolePermissions {
 impl Role {
     /// Returns the default permission set for this role.
     pub fn default_permissions(self) -> Vec<Permission> {
-        use PermissionAction::{Read, Create, Update, Delete, Admin};
-        use ResourceType::{Image, Team, User, Audit, StoragePolicy, System};
+        use PermissionAction::{Admin, Create, Delete, Read, Update};
+        use ResourceType::{Audit, Image, StoragePolicy, System, Team, User};
         match self {
             Self::Viewer => vec![Permission::new(Image, Read)],
             Self::Uploader => vec![Permission::new(Image, Read), Permission::new(Image, Create)],

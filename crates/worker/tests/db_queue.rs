@@ -3,15 +3,15 @@
 //! These exercise the full enqueue → dequeue → complete → verify path
 //! against an in-memory SQLite database with the production schema.
 
+use async_trait::async_trait;
+use bytes::Bytes;
+use picroom_domain::{Image, StorageKey};
 use picroom_domain::{ImageId, UserId};
 use picroom_storage::driver::LocalDriver;
 use picroom_storage::Storage;
 use picroom_worker::{
     ImageLookup, ImageProcessor, Job, JobKind, JobQueue, JobResult, ProcessorDeps, SqliteJobQueue,
 };
-use async_trait::async_trait;
-use bytes::Bytes;
-use picroom_domain::{Image, StorageKey};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -175,7 +175,9 @@ async fn full_pipeline_avif_roundtrip() {
         variants: vec![],
         created_at: OffsetDateTime::now_utc(),
     };
-    let lookup: Arc<dyn ImageLookup> = Arc::new(TestLookup { image: image.clone() });
+    let lookup: Arc<dyn ImageLookup> = Arc::new(TestLookup {
+        image: image.clone(),
+    });
 
     let deps = ProcessorDeps {
         image_lookup: lookup,
@@ -196,19 +198,22 @@ async fn full_pipeline_avif_roundtrip() {
 
     // Worker loop (one iteration).
     let dequeued = q.dequeue().await.unwrap().unwrap();
-    let result = ImageProcessor::process(&deps, dequeued.clone()).await.unwrap();
+    let result = ImageProcessor::process(&deps, dequeued.clone())
+        .await
+        .unwrap();
 
     match &result {
-        JobResult::Variant { kind, key, bytes: Some(b) } => {
+        JobResult::Variant {
+            kind,
+            key,
+            bytes: Some(b),
+        } => {
             assert_eq!(kind, "avif");
             assert!(!b.is_empty());
             // Key should follow `<id>/avif`.
             assert!(key.contains("avif"), "key={key}");
             // Verify the variant is actually stored.
-            let stored = storage
-                .get(&StorageKey::parse(key).unwrap())
-                .await
-                .unwrap();
+            let stored = storage.get(&StorageKey::parse(key).unwrap()).await.unwrap();
             assert_eq!(stored.len(), b.len());
         }
         other => panic!("unexpected result: {other:?}"),
@@ -285,7 +290,8 @@ async fn full_pipeline_webp_and_thumbnail() {
 
     // Verify both variants exist on disk.
     let webp_key = StorageKey::parse(&format!("img/{}/webp", image_id.as_uuid())).unwrap();
-    let thumb_key = StorageKey::parse(&format!("img/{}/thumbnail_200", image_id.as_uuid())).unwrap();
+    let thumb_key =
+        StorageKey::parse(&format!("img/{}/thumbnail_200", image_id.as_uuid())).unwrap();
     let webp_bytes = storage.get(&webp_key).await.unwrap();
     let thumb_bytes = storage.get(&thumb_key).await.unwrap();
     assert!(!webp_bytes.is_empty());

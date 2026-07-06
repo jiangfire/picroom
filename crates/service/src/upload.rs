@@ -130,7 +130,10 @@ impl UploadService {
         }
 
         // 2. MIME check
-        if !ALLOWED_MIME_PREFIXES.iter().any(|p| content_type.starts_with(p)) {
+        if !ALLOWED_MIME_PREFIXES
+            .iter()
+            .any(|p| content_type.starts_with(p))
+        {
             return Err(DomainError::Validation(format!(
                 "unsupported content type: {content_type}"
             ))
@@ -139,9 +142,9 @@ impl UploadService {
 
         // 3. Probe (populate width/height/mime)
         let mut ctx = PipelineContext::default();
-        probe_into(&mut ctx, bytes.clone()).await.map_err(|e| {
-            ServiceError::Internal(format!("probe failed: {e}"))
-        })?;
+        probe_into(&mut ctx, bytes.clone())
+            .await
+            .map_err(|e| ServiceError::Internal(format!("probe failed: {e}")))?;
 
         // 4. Persist original
         let id = Uuid::now_v7();

@@ -9,10 +9,7 @@ use std::sync::Arc;
 pub fn s3_router<S: super::S3State>() -> Router<Arc<S>> {
     Router::new()
         // ListObjectsV2
-        .route(
-            "/:bucket",
-            get(super::list::list_objects_v2::<S>),
-        )
+        .route("/:bucket", get(super::list::list_objects_v2::<S>))
         // Object operations
         .route(
             "/:bucket/*key",

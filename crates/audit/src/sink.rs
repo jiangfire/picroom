@@ -52,7 +52,10 @@ impl InMemoryAuditSink {
 #[async_trait]
 impl AuditSink for InMemoryAuditSink {
     async fn record(&self, event: &AuditEvent) -> Result<(), AuditSinkError> {
-        self.events.lock().expect("mutex poisoned").push(event.clone());
+        self.events
+            .lock()
+            .expect("mutex poisoned")
+            .push(event.clone());
         Ok(())
     }
 }

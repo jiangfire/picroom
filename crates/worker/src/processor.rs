@@ -64,14 +64,7 @@ impl ImageProcessor {
             JobKind::GenerateThumbnail { size } => {
                 let size = *size;
                 let enc: Encoder = Box::new(move |img| thumbnail_encode(img, size));
-                encode_variant(
-                    deps,
-                    &job,
-                    &format!("thumbnail_{size}"),
-                    Some(size),
-                    enc,
-                )
-                .await
+                encode_variant(deps, &job, &format!("thumbnail_{size}"), Some(size), enc).await
             }
             JobKind::ApplyWatermark => Err("watermark not yet implemented".into()),
             JobKind::StripExif => Err("strip-exif not yet implemented".into()),
@@ -108,8 +101,8 @@ async fn encode_variant(
         .map_err(|e| format!("storage get: {e}"))?;
 
     // Decode for re-encode.
-    let decoded = image::load_from_memory(&original)
-        .map_err(|e| format!("decode original: {e}"))?;
+    let decoded =
+        image::load_from_memory(&original).map_err(|e| format!("decode original: {e}"))?;
 
     let bytes = tokio::task::spawn_blocking(move || encoder(&decoded))
         .await

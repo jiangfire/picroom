@@ -41,12 +41,24 @@ mod tests {
     #[test]
     fn admin_can_admin() {
         let s = PermissionService::new();
-        assert!(s.check(&[Role::Admin], ResourceType::System, PermissionAction::Admin).is_ok());
+        assert!(s
+            .check(
+                &[Role::Admin],
+                ResourceType::System,
+                PermissionAction::Admin
+            )
+            .is_ok());
     }
 
     #[test]
     fn viewer_cannot_create() {
         let s = PermissionService::new();
-        assert!(s.check(&[Role::Viewer], ResourceType::Image, PermissionAction::Create).is_err());
+        assert!(s
+            .check(
+                &[Role::Viewer],
+                ResourceType::Image,
+                PermissionAction::Create
+            )
+            .is_err());
     }
 }

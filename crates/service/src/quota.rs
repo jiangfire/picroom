@@ -24,11 +24,7 @@ impl QuotaService {
     }
 
     /// Charges `bytes` against the user's quota; returns error if exceeded.
-    pub async fn charge_user(
-        &self,
-        _user_id: Uuid,
-        _bytes: u64,
-    ) -> Result<(), ServiceError> {
+    pub async fn charge_user(&self, _user_id: Uuid, _bytes: u64) -> Result<(), ServiceError> {
         Ok(())
     }
 }

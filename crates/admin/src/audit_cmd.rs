@@ -12,6 +12,9 @@ pub enum AuditCmdError {
 }
 
 /// Streams audit events (skeleton — real impl in Phase 6+).
-pub async fn audit_tail(_follow: bool, _actor: Option<String>) -> Result<Vec<AuditEvent>, AuditCmdError> {
+pub async fn audit_tail(
+    _follow: bool,
+    _actor: Option<String>,
+) -> Result<Vec<AuditEvent>, AuditCmdError> {
     Ok(Vec::new())
 }

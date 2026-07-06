@@ -68,9 +68,6 @@ mod tests {
         let c = FakeClock::default();
         let t0 = picroom_domain::Clock::now(&c);
         c.advance(60);
-        assert_eq!(
-            (picroom_domain::Clock::now(&c) - t0).whole_seconds(),
-            60
-        );
+        assert_eq!((picroom_domain::Clock::now(&c) - t0).whole_seconds(), 60);
     }
 }

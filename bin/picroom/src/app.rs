@@ -50,43 +50,49 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
     let url = &cfg.database.url;
 
     // --- DB ---
-    let (db, audit, image_repo): (Option<DatabaseHandle>, Arc<dyn AuditSink>, Option<Arc<dyn ImageRepository>>) =
-        if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(cfg.database.max_connections)
-                .connect(url)
-                .await
-            {
-                Ok(pool) => {
-                    tracing::info!("database connected (PostgreSQL)");
-                    let audit: Arc<dyn AuditSink> =
-                        Arc::new(picroom_audit::DbAuditSink::new(pool.clone()));
-                    let repo: Arc<dyn ImageRepository> =
-                        Arc::new(PgImageRepository::new(pool.clone()));
-                    (Some(DatabaseHandle::Pg(pool)), audit, Some(repo))
-                }
-                Err(e) => {
-                    tracing::warn!("database connection failed, degrading: {e}");
-                    (None, Arc::new(picroom_audit::NoopAuditSink), None)
-                }
+    let (db, audit, image_repo): (
+        Option<DatabaseHandle>,
+        Arc<dyn AuditSink>,
+        Option<Arc<dyn ImageRepository>>,
+    ) = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+        match sqlx::postgres::PgPoolOptions::new()
+            .max_connections(cfg.database.max_connections)
+            .connect(url)
+            .await
+        {
+            Ok(pool) => {
+                tracing::info!("database connected (PostgreSQL)");
+                let audit: Arc<dyn AuditSink> =
+                    Arc::new(picroom_audit::DbAuditSink::new(pool.clone()));
+                let repo: Arc<dyn ImageRepository> = Arc::new(PgImageRepository::new(pool.clone()));
+                (Some(DatabaseHandle::Pg(pool)), audit, Some(repo))
             }
-        } else if url.starts_with("sqlite://") {
-            match try_sqlite_connect(url).await {
-                Ok(pool) => {
-                    tracing::info!("database connected (SQLite)");
-                    // SQLite doesn't have PgImageRepository yet; use NoopAudit
-                    // until a SqliteImageRepository is implemented.
-                    (Some(DatabaseHandle::Sqlite(pool)), Arc::new(picroom_audit::NoopAuditSink), None)
-                }
-                Err(e) => {
-                    tracing::warn!("SQLite connection failed, degrading: {e}");
-                    (None, Arc::new(picroom_audit::NoopAuditSink), None)
-                }
+            Err(e) => {
+                tracing::warn!("database connection failed, degrading: {e}");
+                (None, Arc::new(picroom_audit::NoopAuditSink), None)
             }
-        } else {
-            tracing::warn!("unsupported database URL scheme, running without DB");
-            (None, Arc::new(picroom_audit::NoopAuditSink), None)
-        };
+        }
+    } else if url.starts_with("sqlite://") {
+        match try_sqlite_connect(url).await {
+            Ok(pool) => {
+                tracing::info!("database connected (SQLite)");
+                // SQLite doesn't have PgImageRepository yet; use NoopAudit
+                // until a SqliteImageRepository is implemented.
+                (
+                    Some(DatabaseHandle::Sqlite(pool)),
+                    Arc::new(picroom_audit::NoopAuditSink),
+                    None,
+                )
+            }
+            Err(e) => {
+                tracing::warn!("SQLite connection failed, degrading: {e}");
+                (None, Arc::new(picroom_audit::NoopAuditSink), None)
+            }
+        }
+    } else {
+        tracing::warn!("unsupported database URL scheme, running without DB");
+        (None, Arc::new(picroom_audit::NoopAuditSink), None)
+    };
 
     // --- Storage ---
     let storage = build_storage(cfg).await?;
@@ -122,15 +128,14 @@ async fn build_storage(_cfg: &picroom_infra::Config) -> Result<Arc<dyn Storage>>
             region = %s3_cfg.region,
             "storage: S3/MinIO",
         );
-        let driver = S3Driver::new(s3_cfg).await
+        let driver = S3Driver::new(s3_cfg)
+            .await
             .map_err(|e| anyhow::anyhow!("S3 driver init: {e}"))?;
         return Ok(Arc::new(driver) as Arc<dyn Storage>);
     }
 
     // Fallback: LocalDriver rooted at data/.
-    let root = std::env::current_dir()
-        .unwrap_or_default()
-        .join("data");
+    let root = std::env::current_dir().unwrap_or_default().join("data");
     tracing::info!(root = %root.display(), "storage: LocalDriver");
     let driver = LocalDriver::new(root, "/i");
     Ok(Arc::new(driver) as Arc<dyn Storage>)
