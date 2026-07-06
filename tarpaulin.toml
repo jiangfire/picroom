@@ -1,0 +1,28 @@
+# tarpaulin.toml — coverage configuration
+# See https://github.com/xd009642/tarpaulin
+
+[default]
+# Exclude test code itself from coverage
+exclude_files = [
+    "*/tests/*",
+    "*/benches/*",
+    "*/examples/*",
+    "*/target/*",
+    "*/build.rs",
+    "*/mod.rs",
+]
+
+# Don't count trivial lines
+ignore_panics = true
+ignore_tests = true
+
+# Output
+out = ["Html", "Xml"]
+output-dir = "target/coverage"
+
+# Behaviour
+runners = "tokio"
+timeout = "120s"
+features = "all"
+follow-imports = false
+workspace = true

@@ -1,0 +1,998 @@
+openapi: 3.1.0
+info:
+  title: Picroom API
+  version: 1.0.0
+  description: |
+    Picroom — self-hosted image hosting service.
+
+    Two API surfaces:
+    1. REST/JSON under `/api/v1/` — first-class management API.
+    2. AWS S3-compatible under `/s3/` — drop-in replacement for object storage
+       clients (PicGo, rclone, AWS CLI).
+
+    All endpoints require authentication except where noted.
+  license:
+    name: MIT
+    identifier: MIT
+  contact:
+    name: Picroom Maintainers
+    url: https://github.com/picroom/picroom
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://{host}
+    description: Self-hosted production
+    variables:
+      host:
+        default: picroom.example.com
+
+tags:
+  - name: auth
+    description: Authentication and session management
+  - name: users
+    description: User account management
+  - name: teams
+    description: Multi-tenancy / team management
+  - name: images
+    description: Image upload, retrieval, deletion
+  - name: admin
+    description: Administrative operations
+  - name: audit
+    description: Audit log access
+  - name: storage
+    description: Storage policy management
+  - name: system
+    description: Health, readiness, metrics
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /readyz:
+    get:
+      tags: [system]
+      summary: Readiness probe
+      operationId: readyz
+      security: []
+      responses:
+        '200':
+          description: All dependencies ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessReport'
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessReport'
+
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics
+      operationId: metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Password login
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Session cookie (HttpOnly, SameSite=Lax)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/auth/oidc/{provider}/login:
+    get:
+      tags: [auth]
+      summary: Begin OIDC login flow
+      operationId: oidcLoginStart
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+          description: OIDC provider identifier
+      responses:
+        '302':
+          description: Redirect to OIDC provider
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/auth/oidc/{provider}/callback:
+    get:
+      tags: [auth]
+      summary: OIDC callback
+      operationId: oidcCallback
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: state
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to application with session cookie
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Log out current session
+      operationId: logout
+      responses:
+        '204':
+          description: Logged out
+
+  /api/v1/me:
+    get:
+      tags: [users]
+      summary: Current user profile
+      operationId: getMe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/teams:
+    get:
+      tags: [teams]
+      summary: List teams current user belongs to
+      operationId: listMyTeams
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Team'
+    post:
+      tags: [teams]
+      summary: Create a team
+      operationId: createTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTeamRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/teams/{teamId}:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [teams]
+      summary: Get a team
+      operationId: getTeam
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [teams]
+      summary: Update a team
+      operationId: updateTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTeamRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+
+  /api/v1/teams/{teamId}/members:
+    parameters:
+      - $ref: '#/components/parameters/TeamId'
+    get:
+      tags: [teams]
+      summary: List team members
+      operationId: listTeamMembers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TeamMember'
+    post:
+      tags: [teams]
+      summary: Add a member to a team
+      operationId: addTeamMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMemberRequest'
+      responses:
+        '201':
+          description: Created
+
+  /api/v1/images:
+    get:
+      tags: [images]
+      summary: List images
+      operationId: listImages
+      parameters:
+        - in: query
+          name: team_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: owner_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImagePage'
+    post:
+      tags: [images]
+      summary: Upload an image (multipart)
+      operationId: uploadImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                team_id:
+                  type: string
+                  format: uuid
+                storage_policy:
+                  type: string
+                  default: default
+              required: [file]
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Image'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: Quota exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: Unsupported media type
+
+  /api/v1/images/{imageId}:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: Get image metadata
+      operationId: getImage
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Image'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [images]
+      summary: Delete an image
+      operationId: deleteImage
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/file:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: Get original image bytes (redirect to storage)
+      operationId: getImageFile
+      responses:
+        '302':
+          description: Redirect to signed storage URL
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/avif:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: Get AVIF variant
+      operationId: getImageAvif
+      responses:
+        '302':
+          description: Redirect to signed storage URL
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/webp:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: Get WebP variant
+      operationId: getImageWebp
+      responses:
+        '302':
+          description: Redirect to signed storage URL
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/thumbnail:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+      - in: query
+        name: size
+        schema:
+          type: integer
+          enum: [200, 400, 800]
+          default: 400
+    get:
+      tags: [images]
+      summary: Get thumbnail
+      operationId: getImageThumbnail
+      responses:
+        '302':
+          description: Redirect to signed storage URL
+
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      summary: Query audit log
+      operationId: queryAudit
+      parameters:
+        - in: query
+          name: actor_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: action
+          schema:
+            type: string
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/users:
+    post:
+      tags: [admin]
+      summary: Create a user
+      operationId: adminCreateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /api/v1/admin/users/{userId}/role:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    patch:
+      tags: [admin]
+      summary: Change user's global role
+      operationId: adminSetUserRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [viewer, uploader, manager, admin]
+              required: [role]
+      responses:
+        '204':
+          description: Updated
+
+  /api/v1/admin/storage/policies:
+    get:
+      tags: [storage, admin]
+      summary: List storage policies
+      operationId: listStoragePolicies
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoragePolicy'
+    post:
+      tags: [storage, admin]
+      summary: Create a storage policy
+      operationId: createStoragePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStoragePolicyRequest'
+      responses:
+        '201':
+          description: Created
+
+  /s3/{bucket}/{key}:
+    parameters:
+      - in: path
+        name: bucket
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [s3]
+      summary: Upload object (S3 PUT)
+      operationId: s3PutObject
+      security:
+        - sigv4: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+    get:
+      tags: [s3]
+      summary: Download object (S3 GET)
+      operationId: s3GetObject
+      security:
+        - sigv4: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+    head:
+      tags: [s3]
+      summary: Object metadata (S3 HEAD)
+      operationId: s3HeadObject
+      security:
+        - sigv4: []
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Length:
+              schema:
+                type: integer
+    delete:
+      tags: [s3]
+      summary: Delete object (S3 DELETE)
+      operationId: s3DeleteObject
+      security:
+        - sigv4: []
+      responses:
+        '204':
+          description: Deleted
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: picroom_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    sigv4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: AWS Signature Version 4
+
+  parameters:
+    ImageId:
+      in: path
+      name: imageId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TeamId:
+      in: path
+      name: teamId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          examples: [quota_exceeded, validation_failed]
+        message:
+          type: string
+          description: Human-readable message
+        request_id:
+          type: string
+          format: uuid
+        details:
+          type: object
+          additionalProperties: true
+
+    ReadinessReport:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              healthy:
+                type: boolean
+              latency_ms:
+                type: number
+              error:
+                type: string
+                nullable: true
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        totp:
+          type: string
+          description: Optional TOTP code
+
+    User:
+      type: object
+      required: [id, email, name, role, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [viewer, uploader, manager, admin]
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [email, name, password]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        password:
+          type: string
+          minLength: 12
+        role:
+          type: string
+          enum: [viewer, uploader, manager, admin]
+          default: viewer
+
+    Team:
+      type: object
+      required: [id, name, slug, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        storage_policy:
+          type: string
+          default: default
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTeamRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+        description:
+          type: string
+
+    UpdateTeamRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        storage_policy:
+          type: string
+
+    TeamMember:
+      type: object
+      required: [user, role, joined_at]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        role:
+          type: string
+          enum: [viewer, uploader, manager, admin]
+        joined_at:
+          type: string
+          format: date-time
+
+    AddMemberRequest:
+      type: object
+      required: [user_id, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [viewer, uploader, manager, admin]
+
+    Image:
+      type: object
+      required: [id, owner_id, content_type, bytes, width, height, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        storage_policy:
+          type: string
+        key:
+          type: string
+        content_type:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        width:
+          type: integer
+        height:
+          type: integer
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        variants:
+          type: array
+          items:
+            type: string
+            enum: [avif, webp, thumbnail_200, thumbnail_400, thumbnail_800]
+        created_at:
+          type: string
+          format: date-time
+
+    ImagePage:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+
+    StoragePolicy:
+      type: object
+      required: [name, driver, config]
+      properties:
+        name:
+          type: string
+        driver:
+          type: string
+          enum: [local, s3, oss, cos, qiniu, minio]
+        config:
+          type: object
+          additionalProperties: true
+        is_default:
+          type: boolean
+          default: false
+
+    CreateStoragePolicyRequest:
+      type: object
+      required: [name, driver, config]
+      properties:
+        name:
+          type: string
+        driver:
+          type: string
+          enum: [local, s3, oss, cos, qiniu, minio]
+        config:
+          type: object
+          additionalProperties: true
+        is_default:
+          type: boolean
+          default: false
+
+    AuditEvent:
+      type: object
+      required: [id, timestamp, actor_id, action, target_type, target_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        actor_id:
+          type: string
+          format: uuid
+        actor_email:
+          type: string
+        action:
+          type: string
+          examples: [image.upload, image.delete, user.create]
+        target_type:
+          type: string
+          examples: [image, user, team, storage_policy]
+        target_id:
+          type: string
+        ip:
+          type: string
+          format: ipv4
+        user_agent:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []

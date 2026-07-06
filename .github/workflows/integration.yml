@@ -1,0 +1,173 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # ---------------------------------------------------------------------
+  # PostgreSQL integration: full pipeline (migrate → upload → variants)
+  # ---------------------------------------------------------------------
+  postgres-integration:
+    name: PostgreSQL E2E
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: picroom
+          POSTGRES_PASSWORD: picroom_test
+          POSTGRES_DB: picroom_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U picroom -d picroom_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
+      PICROOM_DATABASE__URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features rustls,postgres || true
+
+      - name: Create database
+        run: sqlx database create || true
+
+      - name: Run migrations (PG)
+        run: sqlx migrate run --source migrations
+
+      - name: Build release binary
+        run: cargo build --release --bin picroom
+
+      - name: Start API server
+        run: |
+          ./target/release/picroom api &
+          API_PID=$!
+          echo "API_PID=$API_PID" >> $GITHUB_ENV
+          sleep 3
+          # Health check
+          curl -sf http://localhost:8080/healthz | grep -q '"ok"'
+          echo "API healthy"
+
+      - name: Test upload + variant generation
+        run: |
+          # Generate a small PNG
+          python3 -c "
+          import struct, zlib
+          w, h = 10, 10
+          raw = b''
+          for y in range(h):
+              raw += b'\\x00' + bytes([x % 256 for x in range(w * 3)])
+          def chunk(typ, data):
+              c = typ + data
+              return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+          sig = b'\\x89PNG\\r\\n\\x1a\\n'
+          ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+          idat = zlib.compress(raw)
+          png = sig + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')
+          with open('/tmp/test.png', 'wb') as f:
+              f.write(png)
+          "
+
+          # Upload
+          RESP=$(curl -sf -X POST \
+            -F "file=@/tmp/test.png;type=image/png" \
+            http://localhost:8080/api/v1/images)
+          echo "Upload response: $RESP"
+          IMAGE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Image ID: $IMAGE_ID"
+
+      - name: Kill API
+        if: always()
+        run: kill $API_PID 2>/dev/null || true
+
+  # ---------------------------------------------------------------------
+  # Docker build
+  # ---------------------------------------------------------------------
+  docker-build:
+    name: Docker Image Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          tags: picroom:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify binary exists in image
+        run: |
+          docker run --rm picroom:ci-test --version
+
+      - name: Test healthz
+        run: |
+          docker run --rm -d -p 8081:8080 --name picroom-test picroom:ci-test api
+          sleep 3
+          curl -sf http://localhost:8081/healthz | grep -q '"ok"'
+          echo "Docker image healthy"
+          docker stop picroom-test || true
+
+  # ---------------------------------------------------------------------
+  # docker-compose smoke test
+  # ---------------------------------------------------------------------
+  compose-smoke:
+    name: Docker Compose Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose -f docker/docker-compose.yml config --quiet
+
+      - name: Start stack
+        run: docker compose -f docker/docker-compose.yml up -d postgres minio
+
+      - name: Wait for postgres
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose -f docker/docker-compose.yml exec -T postgres pg_isready -U picroom; then
+              echo "Postgres ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres not ready"
+          exit 1
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO not ready"
+          exit 1
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v

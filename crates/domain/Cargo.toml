@@ -1,0 +1,27 @@
+[package]
+name = "picroom-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true, optional = true }
+uuid = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]

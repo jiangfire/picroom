@@ -1,0 +1,42 @@
+[package]
+name = "picroom"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Self-hosted image hosting service for teams"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "picroom"
+path = "src/main.rs"
+
+[dependencies]
+picroom-domain = { workspace = true }
+picroom-storage = { workspace = true }
+picroom-imaging = { workspace = true }
+picroom-auth = { workspace = true }
+picroom-audit = { workspace = true }
+picroom-infra = { workspace = true }
+picroom-service = { workspace = true }
+picroom-api = { workspace = true }
+picroom-worker = { workspace = true }
+picroom-s3compat = { workspace = true }
+picroom-admin = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["trace", "request-id", "limit"] }
+clap = { version = "4", features = ["derive", "env"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+sqlx = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }

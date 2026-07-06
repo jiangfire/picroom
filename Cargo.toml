@@ -1,0 +1,165 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/api",
+    "crates/service",
+    "crates/domain",
+    "crates/storage",
+    "crates/imaging",
+    "crates/auth",
+    "crates/audit",
+    "crates/s3compat",
+    "crates/worker",
+    "crates/infra",
+    "crates/admin",
+    "bin/picroom",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/picroom/picroom"
+homepage = "https://picroom.dev"
+authors = ["Picroom Maintainers <maintainers@picroom.dev>"]
+description = "Self-hosted image hosting service for teams"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+futures = "0.3"
+bytes = "1"
+
+# HTTP
+axum = { version = "0.7", features = ["macros", "multipart", "http2"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "limit"] }
+hyper = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+serde_urlencoded = "0.7"
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "sqlite",
+    "uuid",
+    "time",
+    "macros",
+    "migrate",
+] }
+
+# Logging & telemetry
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.27"
+opentelemetry = { version = "0.26", features = ["trace"] }
+metrics = "0.23"
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Configuration
+figment = { version = "0.10", features = ["toml", "env"] }
+
+# Time & IDs
+time = { version = "0.3", features = ["serde", "macros"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Crypto / auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = "0.8"
+sha2 = "0.10"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# AWS / S3
+aws-sigv4 = "1"
+aws-credential-types = "1"
+quick-xml = { version = "0.36", features = ["serialize"] }
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+ravif = { version = "0.11", default-features = false }
+rgb = "0.8"
+
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
+utoipa-swagger-ui = "8"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Misc
+url = { version = "2", features = ["serde"] }
+rand_core = "0.6"
+
+# Internal crates
+picroom-domain = { path = "crates/domain" }
+picroom-storage = { path = "crates/storage" }
+picroom-imaging = { path = "crates/imaging" }
+picroom-auth = { path = "crates/auth" }
+picroom-audit = { path = "crates/audit" }
+picroom-service = { path = "crates/service" }
+picroom-api = { path = "crates/api" }
+picroom-s3compat = { path = "crates/s3compat" }
+picroom-worker = { path = "crates/worker" }
+picroom-infra = { path = "crates/infra" }
+picroom-admin = { path = "crates/admin" }
+
+# Dev / test dependencies (used in crate [dev-dependencies])
+mockall = "0.13"
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+wiremock = "0.6"
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres", "minio"] }
+rstest = "0.24"
+insta = { version = "1", features = ["yaml"] }
+pretty_assertions = "1"
+tokio-test = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
+panic = "abort"
+
+[profile.bench]
+debug = true
+inherits = "release"
+
+[profile.dev]
+debug = 1
+incremental = true
+
+# Workspace lints (enforced)
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"

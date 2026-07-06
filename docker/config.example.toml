@@ -1,0 +1,120 @@
+# Picroom example configuration
+# Copy to config/dev.toml and adjust for your environment.
+# All settings can be overridden by environment variables prefixed with
+# PICROOM_ (e.g. PICROOM_SERVER__BIND_ADDR=0.0.0.0:9090).
+
+[server]
+bind_addr = "0.0.0.0:8080"
+request_timeout = "30s"
+graceful_shutdown_timeout = "30s"
+max_body_size = "100MiB"
+
+[database]
+# PostgreSQL connection URL
+url = "postgres://picroom:picroom_dev_secret@localhost:5432/picroom"
+max_connections = 20
+min_connections = 2
+acquire_timeout = "10s"
+idle_timeout = "10m"
+max_lifetime = "30m"
+
+# Optional: SQLite for zero-deps mode (single user only)
+# url = "sqlite://./picroom.db?mode=rwc"
+
+[storage]
+default = "primary"
+
+[storage.policies.primary]
+driver = "local"
+root = "./data/images"
+url_prefix = "/i"
+
+# Alternative: S3 / MinIO
+# driver = "s3"
+# bucket = "picroom-prod"
+# endpoint = "https://s3.amazonaws.com"
+# region = "us-east-1"
+# access_key_id = "${AWS_ACCESS_KEY_ID}"
+# secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+
+# Alternative: Aliyun OSS
+# driver = "oss"
+# bucket = "picroom"
+# endpoint = "https://oss-cn-hangzhou.aliyuncs.com"
+# access_key_id = "${OSS_ACCESS_KEY_ID}"
+# secret_access_key = "${OSS_ACCESS_KEY_KEY}"
+
+[pipeline]
+encode_avif = true
+encode_webp = true
+generate_thumbnail = true
+strip_exif = true
+max_dimension = 8192
+quality = { avif = 60, webp = 80, jpeg = 85 }
+thumbnail_sizes = [200, 400, 800]
+
+[auth]
+allow_signup = false
+session_ttl = "7d"
+password_min_length = 12
+require_email_verification = false
+
+[auth.jwt]
+secret = "${PICROOM_JWT_SECRET}"
+issuer = "picroom"
+audience = "picroom-api"
+ttl = "1h"
+
+[auth.api_token]
+# Prefix for newly minted tokens
+prefix = "pic_"
+
+# [auth.oidc.providers.google]
+# issuer = "https://accounts.google.com"
+# client_id = "${OIDC_GOOGLE_CLIENT_ID}"
+# client_secret = "${OIDC_GOOGLE_CLIENT_SECRET}"
+# redirect_uri = "http://localhost:8080/api/v1/auth/oidc/google/callback"
+
+[quota]
+default_user_bytes = 10737418240       # 10 GiB per user
+default_team_bytes = 1099511627776     # 1 TiB per team
+soft_limit_warning_threshold = 0.9    # warn at 90% used
+hard_limit_enforce = true
+
+[rate_limit]
+# Per-user requests per second
+per_user_rps = 10
+per_user_burst = 20
+# Per-IP requests per second
+per_ip_rps = 50
+per_ip_burst = 100
+
+[audit]
+# How long to keep audit events
+retention_days = 365
+# Enable per-action audit
+record_login = true
+record_logout = true
+record_upload = true
+record_delete = true
+record_admin = true
+
+[logging]
+level = "info"
+format = "json"   # "json" or "pretty"
+
+[telemetry]
+metrics_enabled = true
+metrics_path = "/metrics"
+tracing_enabled = false
+otlp_endpoint = ""
+
+[admin]
+# Whether to expose the /admin endpoint (separate from /api/v1/admin)
+expose_web_admin = true
+
+[s3_compat]
+# Path prefix for the S3-compatible endpoint
+path_prefix = "/s3"
+# Whether to enforce virtual-hosted style (Picroom only supports path-style)
+allow_path_style = true

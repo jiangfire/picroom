@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.0.0)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Build and push Docker images for amd64 + arm64
+  # ---------------------------------------------------------------------
+  docker:
+    name: docker (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            arch: amd64
+            qemu_arch: amd64
+          - os: ubuntu-latest
+            arch: arm64
+            qemu_arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.qemu_arch }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Picroom
+            org.opencontainers.image.description=Self-hosted image hosting service
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------
+  # Build release binary for Linux x86_64 (post-MVP: multi-arch)
+  # ---------------------------------------------------------------------
+  binary:
+    name: binary (linux-x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binary
+        run: cargo build --release --locked --bin picroom
+
+      - name: Strip
+        run: strip target/release/picroom
+
+      - name: Package
+        run: |
+          mkdir -p picroom-${{ steps.version.outputs.version }}-linux-x86_64
+          cp target/release/picroom picroom-${{ steps.version.outputs.version }}-linux-x86_64/picroom
+          cp docker/config.example.toml picroom-${{ steps.version.outputs.version }}-linux-x86_64/config.example.toml
+          cp README.md LICENSE picroom-${{ steps.version.outputs.version }}-linux-x86_64/
+          tar czf picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz picroom-${{ steps.version.outputs.version }}-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: picroom-linux-x86_64
+          path: picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+
+      - name: Attach to release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+          generate_release_notes: true
+          draft: false

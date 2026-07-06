@@ -1,0 +1,39 @@
+# docker ignore — minimize build context
+
+.git
+.gitignore
+.github
+
+target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Local config
+.env
+.env.*
+config/dev.toml
+config/local.toml
+
+# Tests / fixtures
+tests/fixtures/big/
+tests/fixtures/generated/
+
+# Coverage
+coverage/
+*.lcov
+*.profraw
+
+# Docs (not needed in image)
+docs/
+
+# Logs
+*.log
+logs/
+
+# OS junk
+.DS_Store
+Thumbs.db

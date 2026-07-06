@@ -1,0 +1,35 @@
+[package]
+name = "picroom-infra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Infrastructure layer for Picroom (config, db, logging, telemetry)"
+
+[lints]
+workspace = true
+
+[dependencies]
+picroom-domain = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+figment = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+mockall = { workspace = true }
+pretty_assertions = { workspace = true }
+insta = { workspace = true }

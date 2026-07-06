@@ -1,0 +1,71 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pem
+*.key
+*.env
+.env
+.env.local
+.env.*.local
+config/local.toml
+config/dev.local.toml
+
+# Build artifacts
+*.d
+*.o
+*.so
+*.dylib
+*.dll
+*.pdb
+*.exp
+*.lib
+*.pdb
+
+# Coverage / profiling
+coverage/
+*.lcov
+*.profraw
+flamegraph.svg
+
+# Docker
+docker/data/
+docker/volumes/
+
+# Local uploads / downloads
+uploads/
+downloads/
+
+# Test fixtures (large)
+tests/fixtures/big/
+tests/fixtures/generated/
+
+# Migration rollback artifacts
+*.sql.bak
+
+# Logs
+*.log
+logs/
+
+# Tools
+.cache/
+.maturin/
+.pytest_cache/
+
+# OS
+*~
+*.bak
+*.tmp
+*.orig
+*.rej
