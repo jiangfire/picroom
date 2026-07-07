@@ -25,6 +25,7 @@ use url::Url;
 
 /// Configuration for an S3 driver instance.
 #[derive(Debug, Clone)]
+#[allow(missing_docs)]
 pub struct S3Config {
     pub bucket: String,
     pub region: String,
