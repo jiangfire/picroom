@@ -54,7 +54,8 @@ impl S3Config {
 
     /// Sets a custom endpoint (e.g. `MinIO`).
     #[must_use]
-    #[must_use]\npub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+    #[must_use]
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
     }
