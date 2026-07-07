@@ -4,12 +4,6 @@
 # Use a single shared target dir to reduce disk usage
 target-dir = "target"
 
-# Number of codegen units (1 = slower build, faster runtime)
-# Leave default for dev, set in [profile.release]
-
-# Strip debug info for faster incremental builds
-debug = "line-tables-only"
-
 [net]
 # Allow offline rebuilds (CI uses sccache)
 git-fetch-with-cli = true
