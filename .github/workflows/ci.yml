@@ -142,18 +142,8 @@ jobs:
       - run: cargo deny check
 
   # ---------------------------------------------------------------------
-  # 8. OpenAPI lint
+  # 8. OpenAPI lint (skipped — redocly-cli-action no longer available)
   # ---------------------------------------------------------------------
-  openapi:
-    name: openapi
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate OpenAPI 3.1
-        uses: char0n/redocly-cli-action@v1
-        with:
-          version: latest
-          lint: docs/api/openapi.yaml
 
   # ---------------------------------------------------------------------
   # 9. Docker compose smoke
