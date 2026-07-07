@@ -126,8 +126,8 @@ jobs:
       - name: Test healthz
         run: |
           docker run --rm -d -p 8081:8080 --name picroom-test picroom:ci-test api
-          sleep 3
-          curl -sf http://localhost:8081/healthz | grep -q '"ok"'
+          sleep 15
+          curl -sf --max-time 10 http://localhost:8081/healthz | grep -q '"ok"'
           echo "Docker image healthy"
           docker stop picroom-test || true
 
