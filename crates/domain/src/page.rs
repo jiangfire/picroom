@@ -22,6 +22,7 @@ impl Default for PageReq {
 
 impl PageReq {
     /// Clamps the limit to `[1, 200]`.
+    #[must_use]
     pub fn with_clamped_limit(mut self) -> Self {
         self.limit = self.limit.clamp(1, 200);
         self

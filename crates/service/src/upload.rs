@@ -65,7 +65,7 @@ impl UploadService {
 
     /// Sets the default storage policy name (default: `"default"`).
     #[must_use]
-    pub fn with_storage_policy(mut self, name: impl Into<String>) -> Self {
+    #[must_use]\npub fn with_storage_policy(mut self, name: impl Into<String>) -> Self {
         self.default_storage_policy = name.into();
         self
     }
@@ -79,14 +79,14 @@ impl UploadService {
 
     /// Sets the optional job queue for async variant generation.
     #[must_use]
-    pub fn with_job_queue(mut self, q: Arc<dyn JobQueue + Send + Sync>) -> Self {
+    #[must_use]\npub fn with_job_queue(mut self, q: Arc<dyn JobQueue + Send + Sync>) -> Self {
         self.job_queue = Some(q);
         self
     }
 
     /// Sets which thumbnail sizes to enqueue. Empty disables thumbnails.
     #[must_use]
-    pub fn with_thumbnails(mut self, sizes: Vec<u32>) -> Self {
+    #[must_use]\npub fn with_thumbnails(mut self, sizes: Vec<u32>) -> Self {
         self.thumbnail_sizes = sizes;
         self
     }
