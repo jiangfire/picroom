@@ -86,7 +86,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # AWS / S3
 aws-sigv4 = "1"
 aws-credential-types = "1"
-quick-xml = { version = ">=0.36, <0.37", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
