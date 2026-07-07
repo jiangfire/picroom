@@ -55,7 +55,6 @@ impl S3Config {
 
     /// Sets a custom endpoint (e.g. `MinIO`).
     #[must_use]
-    #[must_use]
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
@@ -505,12 +504,6 @@ impl StorageLister for S3Driver {
             .append_pair("list-type", "2")
             .append_pair("prefix", prefix.as_str());
         // Path-style on the bucket — adjust to a bucket-scoped URL.
-        let bucket_url = if self.config.path_style {
-            url.clone()
-        } else {
-            url.clone()
-        };
-        let _ = bucket_url;
         let headers = self.sign_request("GET", &url, &[], &[]);
         let mut req = self.http.get(url);
         for (k, v) in &headers {
@@ -577,7 +570,7 @@ impl StorageSigner for S3Driver {
     async fn sign_get_url(&self, key: &StorageKey, ttl: Duration) -> Result<Url, StorageError> {
         // X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=…&X-Amz-Date=…&X-Amz-SignedHeaders=host&X-Amz-Signature=…
         let now = OffsetDateTime::now_utc();
-        let expires = ttl.as_secs().min(604800); // S3 max 7 days
+        let expires = ttl.as_secs().min(604_800); // S3 max 7 days
         let amz_date = format!(
             "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
             now.year(),

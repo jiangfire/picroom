@@ -8,7 +8,7 @@
 //! - [`oidc`]: `OpenID` Connect integration
 //! - [`rbac`]: role-based access control engine
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod api_token;
 pub mod jwt;

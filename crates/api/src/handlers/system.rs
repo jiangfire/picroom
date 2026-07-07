@@ -16,21 +16,19 @@ pub async fn healthz() -> impl IntoResponse {
 
 /// `GET /readyz` — readiness probe (checks DB and storage).
 pub async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut db_healthy = false;
-    if let Some(repo) = &state.image_repo {
+    let db_healthy = if let Some(repo) = &state.image_repo {
         let _ = repo;
         // For now, probe via a simple existence check.
         // Full implementation would ping the database pool.
-        db_healthy = true;
-    }
+        true
+    } else {
+        false
+    };
 
-    let mut storage_healthy = false;
     let check_key = picroom_domain::StorageKey::parse("healthcheck")
         .unwrap_or_else(|_| picroom_domain::StorageKey::parse("h").unwrap());
-    if state.storage.exists(&check_key).await.is_ok() || true {
-        // `exists` returns false for missing keys → still means storage is reachable.
-        storage_healthy = true;
-    }
+    // `exists` returns false for missing keys → still means storage is reachable.
+    let storage_healthy = state.storage.exists(&check_key).await.is_ok();
 
     let status = if db_healthy && storage_healthy {
         "ready"

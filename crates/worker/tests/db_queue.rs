@@ -1,7 +1,7 @@
-//! Integration tests for the SQLite-backed JobQueue.
+//! Integration tests for the SQLite-backed `JobQueue`.
 //!
 //! These exercise the full enqueue → dequeue → complete → verify path
-//! against an in-memory SQLite database with the production schema.
+//! against an in-memory `SQLite` database with the production schema.
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -32,7 +32,7 @@ impl ImageLookup for TestLookup {
     }
 }
 
-/// Build a minimal SQLite DB with the jobs schema applied.
+/// Build a minimal `SQLite` DB with the jobs schema applied.
 async fn make_pool() -> SqlitePool {
     let opts: SqliteConnectOptions = SqliteConnectOptions::new()
         .filename(":memory:")
@@ -43,7 +43,7 @@ async fn make_pool() -> SqlitePool {
         .await
         .expect("connect to in-memory sqlite");
     sqlx::query(
-        r#"
+        r"
         CREATE TABLE IF NOT EXISTS jobs (
             id              TEXT PRIMARY KEY,
             image_id        TEXT NOT NULL,
@@ -56,7 +56,7 @@ async fn make_pool() -> SqlitePool {
             started_at      TEXT,
             finished_at     TEXT
         )
-        "#,
+        ",
     )
     .execute(&pool)
     .await
@@ -64,7 +64,7 @@ async fn make_pool() -> SqlitePool {
     pool
 }
 
-/// Build a 100x80 PNG, return (bytes, image_metadata).
+/// Build a 100x80 PNG, return (bytes, `image_metadata`).
 fn make_png() -> (Bytes, u32, u32) {
     use std::io::Cursor;
     let img = image::RgbImage::from_fn(100, 80, |x, y| image::Rgb([x as u8, y as u8, 64]));
@@ -126,8 +126,8 @@ async fn fail_eventually_marks_dead() {
     // Insert a job directly with attempts=5 so the next fail → dead.
     let job_id = Uuid::now_v7();
     sqlx::query(
-        r#"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at)
-           VALUES (?1, ?2, ?3, 'pending', 5, ?4)"#,
+        r"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at)
+           VALUES (?1, ?2, ?3, 'pending', 5, ?4)",
     )
     .bind(job_id.to_string())
     .bind(Uuid::now_v7().to_string())
@@ -271,9 +271,11 @@ async fn full_pipeline_webp_and_thumbnail() {
         enqueued_at: OffsetDateTime::now_utc(),
     };
     q.enqueue(webp_job.clone()).await.unwrap();
-    let j = q.dequeue().await.unwrap().unwrap();
-    let r = ImageProcessor::process(&deps, j.clone()).await.unwrap();
-    q.complete(j.id, &r).await.unwrap();
+    let dequeued = q.dequeue().await.unwrap().unwrap();
+    let result = ImageProcessor::process(&deps, dequeued.clone())
+        .await
+        .unwrap();
+    q.complete(dequeued.id, &result).await.unwrap();
 
     // Thumbnail 200.
     let thumb_job = Job {
@@ -284,9 +286,11 @@ async fn full_pipeline_webp_and_thumbnail() {
         enqueued_at: OffsetDateTime::now_utc(),
     };
     q.enqueue(thumb_job.clone()).await.unwrap();
-    let j = q.dequeue().await.unwrap().unwrap();
-    let r = ImageProcessor::process(&deps, j.clone()).await.unwrap();
-    q.complete(j.id, &r).await.unwrap();
+    let dequeued = q.dequeue().await.unwrap().unwrap();
+    let result = ImageProcessor::process(&deps, dequeued.clone())
+        .await
+        .unwrap();
+    q.complete(dequeued.id, &result).await.unwrap();
 
     // Verify both variants exist on disk.
     let webp_key = StorageKey::parse(&format!("img/{}/webp", image_id.as_uuid())).unwrap();

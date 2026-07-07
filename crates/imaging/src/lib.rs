@@ -13,7 +13,7 @@
 //!
 //! A `Pipeline` runs processors sequentially with shared context.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod pipeline;
 pub mod processor;

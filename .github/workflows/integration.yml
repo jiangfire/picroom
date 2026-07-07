@@ -102,6 +102,27 @@ jobs:
   docker-build:
     name: Docker Image Build
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: picroom
+          POSTGRES_PASSWORD: picroom_test
+          POSTGRES_DB: picroom_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U picroom -d picroom_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
+      PICROOM_DATABASE__URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
+      # Required so the release binary doesn't panic on the default "change-me".
+      PICROOM_AUTH__JWT_SECRET: ci-test-secret-do-not-use-in-production
+
     steps:
       - uses: actions/checkout@v4
 
@@ -123,13 +144,40 @@ jobs:
         run: |
           docker run --rm picroom:ci-test --version
 
+      - name: Install sqlx-cli
+        uses: dtolnay/rust-toolchain@stable
+        with: {}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install sqlx-cli --no-default-features --features rustls,postgres || true
+
+      - name: Create database
+        run: sqlx database create || true
+
+      - name: Run migrations
+        run: sqlx migrate run --source migrations
+
       - name: Test healthz
         run: |
-          docker run --rm -d -p 8081:8080 --name picroom-test picroom:ci-test api
-          sleep 15
-          curl -sf --max-time 10 http://localhost:8081/healthz | grep -q '"ok"'
-          echo "Docker image healthy"
-          docker stop picroom-test || true
+          # --network host lets the container reach the Postgres service on
+          # localhost:5432 (and bind 8080 directly, no -p mapping needed).
+          docker run --rm -d \
+            --network host \
+            --name picroom-test \
+            -e DATABASE_URL \
+            -e PICROOM_DATABASE__URL \
+            -e PICROOM_AUTH__JWT_SECRET \
+            picroom:ci-test api
+          trap 'docker stop picroom-test || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 2 http://localhost:8080/healthz | grep -q '"ok"'; then
+              echo "Docker image healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "=== healthz never returned ok ==="
+          docker logs picroom-test || true
+          exit 1
 
   # ---------------------------------------------------------------------
   # docker-compose smoke test

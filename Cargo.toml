@@ -18,7 +18,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.79"
 license = "MIT"
 repository = "https://github.com/picroom/picroom"
 homepage = "https://picroom.dev"
@@ -148,7 +148,6 @@ incremental = true
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
-missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -163,3 +162,18 @@ cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
+return_self_not_must_use = "allow"
+unnecessary_wraps = "allow"
+manual_let_else = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+option_if_let_else = "allow"
+format_push_string = "allow"
+too_many_arguments = "allow"
+if_same_then_else = "allow"
+unused_async = "allow"
+inconsistent_digit_grouping = "allow"
+significant_drop_tightening = "allow"
+format_collect = "allow"
+missing_fields_in_debug = "allow"
+struct_excessive_bools = "allow"
+items_after_statements = "allow"

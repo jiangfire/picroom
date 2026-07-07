@@ -1,6 +1,5 @@
 //! Clock trait and implementations.
 
-use picroom_domain::Clock as _;
 use time::OffsetDateTime;
 
 /// System clock (production).

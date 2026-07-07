@@ -30,7 +30,7 @@ impl<Q: JobQueue + 'static, D: DlqSink + 'static> WorkerPool<Q, D> {
     /// keeps the `JoinSet` alive for as long as the workers should run.
     pub fn run_into<Fut>(
         &self,
-        stop: Arc<AtomicBool>,
+        stop: &Arc<AtomicBool>,
         handler: impl Fn(Job) -> Fut + Send + Sync + 'static + Clone,
         set: &mut tokio::task::JoinSet<()>,
     ) where
@@ -93,7 +93,7 @@ impl<Q: JobQueue + 'static, D: DlqSink + 'static> WorkerPool<Q, D> {
     #[allow(dead_code)]
     pub fn run<Fut>(
         &self,
-        stop: Arc<AtomicBool>,
+        stop: &Arc<AtomicBool>,
         handler: impl Fn(Job) -> Fut + Send + Sync + 'static + Clone,
     ) where
         Fut: std::future::Future<Output = Result<JobResult, String>> + Send,
@@ -127,7 +127,7 @@ pub async fn run_until<F, Fut, Q, D>(
     });
 
     let mut set = tokio::task::JoinSet::new();
-    pool.run_into(flag_for_wait, handler, &mut set);
+    pool.run_into(&flag_for_wait, handler, &mut set);
 
     // Drain tasks as they finish until the stop flag is set.
     while !flag.load(Ordering::Relaxed) {

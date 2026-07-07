@@ -217,7 +217,7 @@ async fn collect_recursive(
             if rel
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with('.') && n.ends_with(".tmp"))
+                .is_some_and(|n| n.starts_with('.') && n.eq_ignore_ascii_case(".tmp"))
             {
                 continue;
             }

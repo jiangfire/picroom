@@ -366,7 +366,7 @@ mod tests {
                 "profile".to_string(),
             ]
         } else {
-            cfg.scopes.clone()
+            cfg.scopes
         };
         assert_eq!(scopes.join(" "), "openid email profile");
     }

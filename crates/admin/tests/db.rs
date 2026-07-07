@@ -1,4 +1,4 @@
-//! Integration tests for the admin CLI against an in-memory SQLite
+//! Integration tests for the admin CLI against an in-memory `SQLite`
 //! database with the production schema (subset).
 
 use picroom_admin::team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite};
@@ -6,10 +6,8 @@ use picroom_admin::user::{
     user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
 };
 use picroom_auth::Role;
-use picroom_domain::UserId;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 async fn make_pool() -> SqlitePool {
     let opts: SqliteConnectOptions = SqliteConnectOptions::new()

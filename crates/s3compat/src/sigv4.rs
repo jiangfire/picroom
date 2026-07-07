@@ -32,7 +32,7 @@ pub struct ParsedAuth {
 pub fn parse_authz(header: &str) -> Result<ParsedAuth, S3Error> {
     let header = header
         .strip_prefix("AWS4-HMAC-SHA256 ")
-        .ok_or(S3Error::BadRequest("unsupported algorithm".into()))?;
+        .ok_or_else(|| S3Error::BadRequest("unsupported algorithm".into()))?;
 
     let algorithm = String::from("AWS4-HMAC-SHA256");
     let mut access_key = String::new();
@@ -110,13 +110,12 @@ pub fn string_to_sign(
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(canonical_req.as_bytes());
-    let hashed = hex_lower(&hasher.finalize());
-    format!("{algorithm}\n{amz_date}\n{date_scope}\n{hashed}")
+    let hash_hex = hex_lower(&hasher.finalize());
+    format!("{algorithm}\n{amz_date}\n{date_scope}\n{hash_hex}")
 }
 
 /// Derives the signing key from secret + date + region + service.
 pub fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> [u8; 32] {
-    type HmacSha256 = Hmac<Sha256>;
     let k_secret = format!("AWS4{secret}");
     let mut k = hmac_key(k_secret.as_bytes(), date.as_bytes());
     k = hmac_key(&k, region.as_bytes());
@@ -246,7 +245,7 @@ pub fn within_skew(date_str: &str, now: OffsetDateTime) -> bool {
 mod tests {
     use super::*;
 
-    /// Reference test vector from AWS SigV4 docs.
+    /// Reference test vector from AWS `SigV4` docs.
     /// (Sign request, "AWS4-HMAC-SHA256" examples).
     #[test]
     fn sha256_hex_known_value() {
@@ -332,8 +331,8 @@ mod tests {
         let key = derive_signing_key(secret, &parsed.date, &parsed.region, &parsed.service);
         let expected_sig = sign(&key, &s2s);
 
-        let mut p2 = parsed.clone();
-        p2.signature = expected_sig.clone();
+        let mut p2 = parsed;
+        p2.signature = expected_sig;
         verify(
             &p2,
             method,

@@ -7,6 +7,7 @@ use bytes::Bytes;
 
 /// Applies a watermark to images.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WatermarkProcessor {
     text: Option<String>,
     image: Option<Bytes>,

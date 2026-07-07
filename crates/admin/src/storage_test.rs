@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use picroom_domain::StorageKey;
-use picroom_storage::{Storage, StorageReader, StorageWriter};
+use picroom_storage::Storage;
 use thiserror::Error;
 
 /// Storage-test errors.

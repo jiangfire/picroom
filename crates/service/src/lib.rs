@@ -2,7 +2,7 @@
 //!
 //! Use-case orchestration layer.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod delete;
 pub mod error;

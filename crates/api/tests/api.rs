@@ -1,7 +1,7 @@
 //! Integration test for the HTTP API.
 
 use axum::body::Body;
-use axum::http::{header, Request, StatusCode};
+use axum::http::{Request, StatusCode};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use picroom_api::AppState;

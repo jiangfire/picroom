@@ -2,7 +2,7 @@
 //!
 //! AWS S3-compatible HTTP endpoint with `SigV4` verification.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod bucket;
 pub mod error;

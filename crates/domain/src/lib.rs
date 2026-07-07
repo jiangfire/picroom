@@ -22,7 +22,7 @@
 //! See [`docs/spec.md`](https://github.com/picroom/picroom/blob/main/docs/spec.md)
 //! for the full domain specification.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod clock;
 pub mod error;

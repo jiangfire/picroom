@@ -86,8 +86,9 @@ pub async fn delete_object<S: S3State>(
         Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
     match state.storage().delete(&storage_key).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(picroom_storage::StorageError::NotFound(_)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) | Err(picroom_storage::StorageError::NotFound(_)) => {
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => s3_xml_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "InternalError",

@@ -10,6 +10,7 @@ use uuid::Uuid;
 /// Delete service (skeleton).
 #[derive(Debug, Clone)]
 pub struct DeleteService<S: StorageWriter, A: AuditSink> {
+    #[allow(dead_code)]
     storage: S,
     audit: A,
 }

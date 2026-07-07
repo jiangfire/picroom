@@ -127,7 +127,7 @@ mod tests {
             .unwrap();
         let bytes = match out {
             ProcessorOutput::Bytes(b) => b,
-            _ => panic!("expected bytes"),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
         };
         let dims = image::load_from_memory(&bytes).unwrap().dimensions();
         assert_eq!(dims, (50, 25));
@@ -143,7 +143,7 @@ mod tests {
             .unwrap();
         let bytes = match out {
             ProcessorOutput::Bytes(b) => b,
-            _ => panic!("expected bytes"),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
         };
         // Should be byte-identical since already small enough.
         assert_eq!(bytes, original);

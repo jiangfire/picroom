@@ -84,7 +84,7 @@ mod tests {
             .unwrap();
         match out {
             ProcessorOutput::Bytes(b) => assert_eq!(b, Bytes::from_static(b"x")),
-            _ => panic!("expected bytes output"),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes output"),
         }
     }
 
@@ -97,7 +97,7 @@ mod tests {
             .unwrap();
         match out {
             ProcessorOutput::Bytes(b) => assert_eq!(b, Bytes::from_static(b"abc")),
-            _ => panic!("expected bytes output"),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes output"),
         }
     }
 

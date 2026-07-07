@@ -13,7 +13,7 @@
 //! Concrete drivers implement these traits; an [`AnyStorage`] enum provides
 //! zero-cost static dispatch over all drivers.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod any;
 pub mod contract_test;

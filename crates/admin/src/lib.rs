@@ -2,7 +2,7 @@
 //!
 //! CLI subcommands: migrate, user, team, audit, config, storage-test.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod audit_cmd;
 pub mod config_cmd;

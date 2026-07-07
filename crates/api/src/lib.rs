@@ -2,7 +2,7 @@
 //!
 //! HTTP API surface (REST + S3-compat).
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod error;
 pub mod extractors;

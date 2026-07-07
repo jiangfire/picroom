@@ -50,11 +50,14 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
     let url = &cfg.database.url;
 
     // --- DB ---
-    let (db, audit, image_repo): (
+    type BuiltDeps = (
         Option<DatabaseHandle>,
         Arc<dyn AuditSink>,
         Option<Arc<dyn ImageRepository>>,
-    ) = if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+    );
+    let (db, audit, image_repo): BuiltDeps = if url.starts_with("postgres://")
+        || url.starts_with("postgresql://")
+    {
         match sqlx::postgres::PgPoolOptions::new()
             .max_connections(cfg.database.max_connections)
             .connect(url)

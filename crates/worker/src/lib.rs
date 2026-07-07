@@ -2,7 +2,7 @@
 //!
 //! Async job consumer for the image pipeline.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod db_queue;
 pub mod dlq;

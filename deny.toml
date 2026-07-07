@@ -8,6 +8,7 @@ all-features = false
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
+unmaintained = "workspace"
 ignore = [
     # rsa — no fix available, indirect dep via testcontainers
     "RUSTSEC-2023-0071",

@@ -19,7 +19,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         "database configured"
     );
 
-    let bind_addr = bind_override.unwrap_or(cfg.server.bind_addr.clone());
+    let bind_addr = bind_override.unwrap_or_else(|| cfg.server.bind_addr.clone());
     let addr: SocketAddr = bind_addr.parse()?;
 
     // Build all dependencies from config.

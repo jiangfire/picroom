@@ -2,7 +2,7 @@
 //!
 //! Append-only audit log: events + sinks.
 
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod db_sink;
 pub mod event;

@@ -64,45 +64,36 @@ impl UploadService {
     }
 
     /// Sets the default storage policy name (default: `"default"`).
-    #[must_use]
-    #[must_use]
     pub fn with_storage_policy(mut self, name: impl Into<String>) -> Self {
         self.default_storage_policy = name.into();
         self
     }
 
     /// Sets the maximum allowed upload size (default: 100 MiB).
-    #[must_use]
     pub const fn with_max_bytes(mut self, max: u64) -> Self {
         self.max_bytes = max;
         self
     }
 
     /// Sets the optional job queue for async variant generation.
-    #[must_use]
-    #[must_use]
     pub fn with_job_queue(mut self, q: Arc<dyn JobQueue + Send + Sync>) -> Self {
         self.job_queue = Some(q);
         self
     }
 
     /// Sets which thumbnail sizes to enqueue. Empty disables thumbnails.
-    #[must_use]
-    #[must_use]
     pub fn with_thumbnails(mut self, sizes: Vec<u32>) -> Self {
         self.thumbnail_sizes = sizes;
         self
     }
 
     /// Disables AVIF encoding.
-    #[must_use]
     pub const fn without_avif(mut self) -> Self {
         self.enable_avif = false;
         self
     }
 
     /// Disables WebP encoding.
-    #[must_use]
     pub const fn without_webp(mut self) -> Self {
         self.enable_webp = false;
         self
@@ -114,6 +105,7 @@ impl UploadService {
     }
 
     /// Validates, probes, persists, records audit, and enqueues variant jobs.
+    #[allow(clippy::too_many_lines)]
     pub async fn upload(
         &self,
         owner_id: UserId,
