@@ -69,3 +69,5 @@ logs/
 *.tmp
 *.orig
 *.rej
+# Runtime artifacts (local storage dir created when running the API)
+/data/
