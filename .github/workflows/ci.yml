@@ -175,13 +175,17 @@ jobs:
         run: sqlx database create || true
       - name: Run migrations (PG)
         run: sqlx migrate run --source migrations
-      - name: Seed dev user for E2E
+      - name: Seed dev user + default storage policy for E2E
         # The upload handler stores images with owner_id = dev_user (nil UUID)
         # and writes audit events with actor_id = nil UUID. Both columns FK to
         # users(id), so we must seed that row or the upload hits a FK violation.
+        # PgImageRepository::insert hardcodes storage_policy = 'default', which
+        # FK-references storage_policies(name). The migrations never seed one, so
+        # we must insert it here or the image insert FK-violates.
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
           psql "$DATABASE_URL" -c "INSERT INTO users (id, email, name, password_hash, role) VALUES ('00000000-0000-0000-0000-000000000000', 'dev@example.com', 'Dev User', 'ci-not-a-real-hash', 'admin') ON CONFLICT (id) DO NOTHING;"
+          psql "$DATABASE_URL" -c "INSERT INTO storage_policies (name, driver, config, is_default) VALUES ('default', 'local', '{}', true) ON CONFLICT (name) DO NOTHING;"
       - name: Build release binary
         run: cargo build --release --bin picroom
       - name: Start API server
