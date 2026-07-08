@@ -23,6 +23,6 @@ output-dir = "target/coverage"
 # Behaviour
 runners = "tokio"
 timeout = "120s"
-features = "all"
+all-features = true
 follow-imports = false
 workspace = true

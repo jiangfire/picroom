@@ -175,6 +175,13 @@ jobs:
         run: sqlx database create || true
       - name: Run migrations (PG)
         run: sqlx migrate run --source migrations
+      - name: Seed dev user for E2E
+        # The upload handler stores images with owner_id = dev_user (nil UUID)
+        # and writes audit events with actor_id = nil UUID. Both columns FK to
+        # users(id), so we must seed that row or the upload hits a FK violation.
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql "$DATABASE_URL" -c "INSERT INTO users (id, email, name, password_hash, role) VALUES ('00000000-0000-0000-0000-000000000000', 'dev@example.com', 'Dev User', 'ci-not-a-real-hash', 'admin') ON CONFLICT (id) DO NOTHING;"
       - name: Build release binary
         run: cargo build --release --bin picroom
       - name: Start API server
@@ -231,22 +238,7 @@ jobs:
   docker-build:
     name: Docker Image Build
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: picroom
-          POSTGRES_PASSWORD: picroom_test
-          POSTGRES_DB: picroom_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U picroom -d picroom_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      DATABASE_URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
-      PICROOM_DATABASE__URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
       # Required so the release binary doesn't panic on the default "change-me".
       PICROOM_AUTH__JWT_SECRET: ci-test-secret-do-not-use-in-production
     steps:
@@ -266,35 +258,33 @@ jobs:
       - name: Verify binary exists in image
         run: |
           docker run --rm picroom:ci-test --version
-      - name: Install sqlx-cli
-        uses: dtolnay/rust-toolchain@stable
-        with: {}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install sqlx-cli --no-default-features --features rustls,postgres || true
-      - name: Create database
-        run: sqlx database create || true
-      - name: Run migrations
-        run: sqlx migrate run --source migrations
       - name: Test healthz
         run: |
-          # healthz is a liveness probe and does not touch the DB, so the
-          # container needs no Postgres. GitHub-hosted runners restrict
-          # `--network host`, so we publish 8080 and probe it from the runner.
-          docker run --rm -d \
+          # healthz is a pure liveness probe and never touches the DB, so the
+          # container needs no Postgres. We pass an empty PICROOM_DATABASE__URL
+          # so the app runs with no DB dependency at all (it degrades
+          # gracefully if a DB is configured but unreachable). GitHub-hosted
+          # runners restrict `--network host`, so we publish 8080 and probe it
+          # from the runner over 127.0.0.1. We deliberately omit `--rm` so the
+          # logs survive a crash for diagnosis.
+          docker run -d \
             -p 8080:8080 \
             --name picroom-test \
             -e PICROOM_AUTH__JWT_SECRET \
+            -e PICROOM_DATABASE__URL= \
             picroom:ci-test api
-          trap 'docker stop picroom-test || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -sf --max-time 2 http://localhost:8080/healthz | grep -q '"ok"'; then
+          trap 'docker stop picroom-test >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 45); do
+            if curl -sf --max-time 2 http://127.0.0.1:8080/healthz | grep -q '"ok"'; then
               echo "Docker image healthy"
+              docker stop picroom-test >/dev/null 2>&1 || true
               exit 0
             fi
             sleep 2
           done
           echo "=== healthz never returned ok ==="
           docker logs picroom-test || true
+          docker stop picroom-test >/dev/null 2>&1 || true
           exit 1
 
   # ---------------------------------------------------------------------
