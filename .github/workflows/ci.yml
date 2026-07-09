@@ -180,14 +180,14 @@ jobs:
       - name: Run migrations (PG)
         run: sqlx migrate run --source migrations
       - name: Seed dev user for E2E
-        # The upload handler stores images with owner_id = dev_user (nil UUID)
-        # and writes audit events with actor_id = nil UUID. Both columns FK to
-        # users(id), so we must seed that row or the upload hits a FK violation.
-        # (The 'default' storage policy it also needs is now seeded by migration
-        # 0006_seed_default_storage_policy.sql, so no CI seed is required for it.)
+        # Login now verifies the password against an Argon2id hash, so we seed a
+        # real hash (generated offline for the password "ci") instead of a
+        # placeholder. The upload handler persists images with the authenticated
+        # user's id and audit events reference users(id) via FK, so this row must
+        # exist for the E2E upload to succeed.
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
-          psql "$DATABASE_URL" -c "INSERT INTO users (id, email, name, password_hash, role) VALUES ('00000000-0000-0000-0000-000000000000', 'dev@example.com', 'Dev User', 'ci-not-a-real-hash', 'admin') ON CONFLICT (id) DO NOTHING;"
+          psql "$DATABASE_URL" -c "INSERT INTO users (id, email, name, password_hash, role) VALUES ('00000000-0000-0000-0000-000000000000', 'dev@example.com', 'Dev User', '\$argon2id\$v=19\$m=65536,t=3,p=4\$7BXzcYmn8Helo3DoDNDUmg\$aaUxjX8rUXBscQYqblo6NlIAXMN2bvHwmI6hnC9NcWE', 'admin') ON CONFLICT (id) DO NOTHING;"
       - name: Build release binary
         run: cargo build --release --bin picroom
       - name: Start API server
@@ -219,12 +219,13 @@ jobs:
               f.write(png)
           "
 
-          # Log in (stub auth: any credentials return a JWT)
+          # Log in with the seeded dev user (password verified against the Argon2 hash).
           TOKEN=$(curl -sf -X POST \
             -H 'content-type: application/json' \
-            -d '{"email":"ci@example.com","password":"ci"}' \
+            -d '{"email":"dev@example.com","password":"ci"}' \
             http://localhost:8080/api/v1/auth/login | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
           echo "Got token: ${TOKEN:0:12}..."
+          if [ -z "$TOKEN" ]; then echo "login failed"; exit 1; fi
 
           # Upload (Bearer auth required on /api/v1/images)
           RESP=$(curl -sf -X POST \

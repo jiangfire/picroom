@@ -4,6 +4,7 @@
 //! Image entity.
 
 use crate::storage_key::StorageKey;
+use crate::team::TeamId;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -54,6 +55,8 @@ pub struct Image {
     pub id: ImageId,
     /// Owner user.
     pub owner_id: UserId,
+    /// Owning team, if the image belongs to a team (else `None`).
+    pub team_id: Option<TeamId>,
     /// Storage key.
     pub key: StorageKey,
     /// Content type (MIME).
@@ -92,6 +95,7 @@ mod tests {
         let img = Image {
             id: ImageId(Uuid::nil()),
             owner_id: UserId(Uuid::nil()),
+            team_id: None,
             key: StorageKey::parse("x.jpg").unwrap(),
             content_type: "image/jpeg".into(),
             bytes: 1,
@@ -109,6 +113,7 @@ mod tests {
         let img = Image {
             id: ImageId(Uuid::nil()),
             owner_id: UserId(Uuid::nil()),
+            team_id: None,
             key: StorageKey::parse("x.jpg").unwrap(),
             content_type: "image/jpeg".into(),
             bytes: 1,

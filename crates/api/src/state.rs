@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use picroom_audit::AuditSink;
+use picroom_audit::{AuditReader, AuditSink};
 use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
-use picroom_service::repo::ImageRepository;
-use picroom_service::repo::UserRepository;
+use picroom_service::repo::{ImageRepository, TeamRepository, UserRepository};
+use picroom_service::PermissionService;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
@@ -37,6 +37,12 @@ pub struct AppState {
     pub audit: Arc<dyn AuditSink>,
     /// JWT service for auth.
     pub jwt: Arc<JwtService>,
+    /// RBAC permission service (replaces ad-hoc role checks in handlers).
+    pub permissions: Arc<PermissionService>,
+    /// Team repository (None when running without a DB).
+    pub team_repo: Option<Arc<dyn TeamRepository>>,
+    /// Audit log reader (None when running without a DB).
+    pub audit_reader: Option<Arc<dyn AuditReader>>,
     /// Optional S3 client credential; when set, the S3 endpoint enforces `SigV4`.
     pub s3_credentials: Option<picroom_s3compat::S3Credential>,
 }
@@ -76,6 +82,9 @@ impl AppState {
                 "picroom-api",
                 3600,
             )),
+            permissions: Arc::new(PermissionService::new()),
+            team_repo: None,
+            audit_reader: None,
             s3_credentials: None,
         }
     }

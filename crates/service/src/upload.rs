@@ -158,6 +158,7 @@ impl UploadService {
         let image = Image {
             id: ImageId(id),
             owner_id,
+            team_id: None,
             key,
             content_type: content_type.to_string(),
             bytes: bytes.len() as u64,

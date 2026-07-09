@@ -220,6 +220,7 @@ mod tests {
         let img = Image {
             id: ImageId(id),
             owner_id: picroom_domain::UserId(uuid::Uuid::nil()),
+            team_id: None,
             key: picroom_domain::StorageKey::parse("img/x.bin").unwrap(),
             content_type: "image/png".into(),
             bytes: 1,

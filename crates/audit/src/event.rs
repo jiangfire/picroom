@@ -88,6 +88,26 @@ impl AuditAction {
             Self::Other => "other",
         }
     }
+
+    /// Parses an [`AuditAction`] from the stable string id produced by
+    /// [`AuditAction::as_str`]. Unknown values fall back to [`AuditAction::Other`].
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "auth.login" => Self::Login,
+            "auth.logout" => Self::Logout,
+            "image.upload" => Self::ImageUpload,
+            "image.delete" => Self::ImageDelete,
+            "team.create" => Self::TeamCreate,
+            "team.member_add" => Self::TeamMemberAdd,
+            "team.member_remove" => Self::TeamMemberRemove,
+            "user.create" => Self::UserCreate,
+            "user.role_change" => Self::UserRoleChange,
+            "storage_policy.create" => Self::StoragePolicyCreate,
+            "storage_policy.update" => Self::StoragePolicyUpdate,
+            "permission.denied" => Self::PermissionDenied,
+            _ => Self::Other,
+        }
+    }
 }
 
 #[cfg(test)]

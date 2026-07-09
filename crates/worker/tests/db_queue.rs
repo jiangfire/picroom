@@ -169,6 +169,7 @@ async fn full_pipeline_avif_roundtrip() {
     let image = Image {
         id: image_id,
         owner_id: UserId(Uuid::nil()),
+        team_id: None,
         key: key.clone(),
         content_type: "image/png".into(),
         bytes: bytes.len() as u64,
@@ -248,6 +249,7 @@ async fn full_pipeline_webp_and_thumbnail() {
     let image = Image {
         id: image_id,
         owner_id: UserId(Uuid::nil()),
+        team_id: None,
         key: key.clone(),
         content_type: "image/png".into(),
         bytes: bytes.len() as u64,

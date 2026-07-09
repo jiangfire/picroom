@@ -12,8 +12,11 @@
 //! - Wires the `UploadService` with real audit + optional job queue
 
 use anyhow::Result;
-use picroom_audit::AuditSink;
-use picroom_service::repo::{ImageRepository, PgImageRepository, PgUserRepository, UserRepository};
+use picroom_audit::{AuditReader, AuditSink, DbAuditSink};
+use picroom_service::repo::{
+    ImageRepository, PgImageRepository, PgTeamRepository, PgUserRepository, TeamRepository,
+    UserRepository,
+};
 use picroom_storage::driver::{LocalDriver, S3Driver};
 use picroom_storage::Storage;
 use std::sync::Arc;
@@ -28,6 +31,10 @@ pub struct AppDeps {
     pub image_repo: Option<Arc<dyn ImageRepository>>,
     /// The user repository (None if DB unavailable).
     pub user_repo: Option<Arc<dyn UserRepository>>,
+    /// The team repository (None if DB unavailable).
+    pub team_repo: Option<Arc<dyn TeamRepository>>,
+    /// The audit log reader (None if DB unavailable).
+    pub audit_reader: Option<Arc<dyn AuditReader>>,
     /// The DB pool (for job queue, admin CLI, etc.).
     pub db: Option<DatabaseHandle>,
 }
@@ -60,8 +67,11 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
         Arc<dyn AuditSink>,
         Option<Arc<dyn ImageRepository>>,
         Option<Arc<dyn UserRepository>>,
+        Option<Arc<dyn TeamRepository>>,
+        Option<Arc<dyn AuditReader>>,
     );
-    let (db, audit, image_repo, user_repo): BuiltDeps = if url.starts_with("postgres://")
+    let (db, audit, image_repo, user_repo, team_repo, audit_reader): BuiltDeps = if url
+        .starts_with("postgres://")
         || url.starts_with("postgresql://")
     {
         match sqlx::postgres::PgPoolOptions::new()
@@ -71,20 +81,33 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
         {
             Ok(pool) => {
                 tracing::info!("database connected (PostgreSQL)");
-                let audit: Arc<dyn AuditSink> =
-                    Arc::new(picroom_audit::DbAuditSink::new(pool.clone()));
+                let audit_sink: Arc<DbAuditSink> = Arc::new(DbAuditSink::new(pool.clone()));
+                let audit: Arc<dyn AuditSink> = audit_sink.clone();
+                let audit_reader: Option<Arc<dyn AuditReader>> =
+                    Some(audit_sink as Arc<dyn AuditReader>);
                 let repo: Arc<dyn ImageRepository> = Arc::new(PgImageRepository::new(pool.clone()));
+                let team_repo: Option<Arc<dyn TeamRepository>> =
+                    Some(Arc::new(PgTeamRepository::new(pool.clone())));
                 let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
                 (
                     Some(DatabaseHandle::Pg(pool)),
                     audit,
                     Some(repo),
                     Some(users),
+                    team_repo,
+                    audit_reader,
                 )
             }
             Err(e) => {
                 tracing::warn!("database connection failed, degrading: {e}");
-                (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
+                (
+                    None,
+                    Arc::new(picroom_audit::NoopAuditSink),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             }
         }
     } else if url.starts_with("sqlite://") {
@@ -98,16 +121,32 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
                     Arc::new(picroom_audit::NoopAuditSink),
                     None,
                     None,
+                    None,
+                    None,
                 )
             }
             Err(e) => {
                 tracing::warn!("SQLite connection failed, degrading: {e}");
-                (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
+                (
+                    None,
+                    Arc::new(picroom_audit::NoopAuditSink),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
             }
         }
     } else {
         tracing::warn!("unsupported database URL scheme, running without DB");
-        (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
+        (
+            None,
+            Arc::new(picroom_audit::NoopAuditSink),
+            None,
+            None,
+            None,
+            None,
+        )
     };
 
     // --- Storage ---
@@ -118,6 +157,8 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
         audit,
         image_repo,
         user_repo,
+        team_repo,
+        audit_reader,
         db,
     })
 }

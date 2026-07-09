@@ -9,8 +9,8 @@ use crate::state::AppState;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use bytes::Bytes;
-use picroom_auth::Role;
-use picroom_domain::ImageId;
+use picroom_auth::{PermissionAction, ResourceType};
+use picroom_domain::{ImageId, TeamId};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -66,7 +66,7 @@ pub async fn upload(
     // Attribute the upload to the authenticated principal (never the dev user).
     let actor = auth.user_id;
 
-    let image = match state.upload.upload(actor, &mime, bytes).await {
+    let mut image = match state.upload.upload(actor, &mime, bytes).await {
         Ok(i) => i,
         Err(e) => {
             let s = format!("{e}");
@@ -80,6 +80,9 @@ pub async fn upload(
             return Err(ApiError::from(e));
         }
     };
+
+    // Associate the upload with a team when one was supplied.
+    image.team_id = team_id.map(TeamId);
 
     // Persist metadata if a repo is configured.
     if let Some(repo) = &state.image_repo {
@@ -96,7 +99,7 @@ pub async fn upload(
         "width": image.width,
         "height": image.height,
         "content_type": image.content_type,
-        "team_id": team_id,
+        "team_id": image.team_id.map(|t| t.to_string()),
         "created_at": image.created_at,
     })))
 }
@@ -118,9 +121,14 @@ pub async fn list(
         limit: params.limit.unwrap_or(50).clamp(1, 200),
         cursor: None,
     };
-    // Default to the caller; admins may override to view another owner.
+    // Default to the caller; users who may manage images (manager/admin via
+    // RBAC) may override to view another owner.
+    let can_list_others = state
+        .permissions
+        .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+        .is_ok();
     let owner = match params.owner {
-        Some(owner) if auth.roles.contains(&Role::Admin) => owner,
+        Some(owner) if can_list_others => owner,
         _ => auth.user_id.as_uuid(),
     };
     let images = repo
@@ -138,6 +146,7 @@ pub async fn list(
                 "bytes": i.bytes,
                 "width": i.width,
                 "height": i.height,
+                "team_id": i.team_id.map(|t| t.to_string()),
                 "created_at": i.created_at,
             })
         })
@@ -171,8 +180,14 @@ pub async fn get(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    // IDOR check: only owner or admin can view.
-    if auth.user_id != image.owner_id && !auth.roles.contains(&Role::Admin) {
+    // IDOR check: only the owner, or a principal permitted to manage images
+    // (manager/admin via RBAC), may view this image.
+    if auth.user_id != image.owner_id
+        && state
+            .permissions
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+            .is_err()
+    {
         return Err(ApiError::forbidden("not allowed"));
     }
     Ok(axum::Json(json!({
@@ -182,6 +197,7 @@ pub async fn get(
         "width": image.width,
         "height": image.height,
         "owner_id": image.owner_id.to_string(),
+        "team_id": image.team_id.map(|t| t.to_string()),
         "created_at": image.created_at,
     })))
 }
@@ -196,8 +212,14 @@ pub async fn delete(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    // IDOR check: only owner or admin can delete.
-    if auth.user_id != image.owner_id && !auth.roles.contains(&Role::Admin) {
+    // IDOR check: only the owner, or a principal permitted to delete images
+    // (manager/admin via RBAC), may delete this image.
+    if auth.user_id != image.owner_id
+        && state
+            .permissions
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Delete)
+            .is_err()
+    {
         return Err(ApiError::forbidden("not allowed"));
     }
     // Delete from storage (best-effort).

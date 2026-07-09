@@ -8,7 +8,7 @@
 
 use crate::ServiceError;
 use async_trait::async_trait;
-use picroom_domain::{Image, ImageId, Page, PageReq, UserId};
+use picroom_domain::{Image, ImageId, Page, PageReq, Team, TeamId, UserId};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -55,11 +55,12 @@ impl ImageRepository for PgImageRepository {
                 content_type, bytes, width, height, sha256, status,
                 created_at, updated_at
             )
-            VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $11)
             ",
         )
         .bind(image.id.as_uuid())
         .bind(image.owner_id.as_uuid())
+        .bind(image.team_id.as_ref().map(TeamId::as_uuid))
         .bind("default")
         .bind(image.key.as_str())
         .bind(&image.content_type)
@@ -77,7 +78,7 @@ impl ImageRepository for PgImageRepository {
     async fn get(&self, id: ImageId) -> Result<Image, ServiceError> {
         let row: Option<ImageRow> = sqlx::query_as::<_, ImageRow>(
             r"
-            SELECT id, owner_id, storage_policy, storage_key, content_type,
+            SELECT id, owner_id, team_id, storage_policy, storage_key, content_type,
                    bytes, width, height, sha256, status, created_at
             FROM images
             WHERE id = $1 AND status != 'deleted'
@@ -102,7 +103,7 @@ impl ImageRepository for PgImageRepository {
         let limit = i64::from(page.limit.clamp(1, 200));
         let rows: Vec<ImageRow> = sqlx::query_as::<_, ImageRow>(
             r"
-            SELECT id, owner_id, storage_policy, storage_key, content_type,
+            SELECT id, owner_id, team_id, storage_policy, storage_key, content_type,
                    bytes, width, height, sha256, status, created_at
             FROM images
             WHERE owner_id = $1 AND status != 'deleted'
@@ -149,6 +150,8 @@ pub struct ImageRow {
     pub id: Uuid,
     /// Owner user id.
     pub owner_id: Uuid,
+    /// Owning team id (may be null).
+    pub team_id: Option<Uuid>,
     /// Storage policy name.
     pub storage_policy: String,
     /// Storage key.
@@ -177,6 +180,7 @@ impl TryFrom<ImageRow> for Image {
         Ok(Self {
             id: picroom_domain::ImageId(r.id),
             owner_id: picroom_domain::UserId(r.owner_id),
+            team_id: r.team_id.map(TeamId),
             key,
             content_type: r.content_type,
             bytes: r.bytes as u64,
@@ -297,6 +301,133 @@ impl picroom_worker::processor::VariantRepository for PgVariantRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("insert variant: {e}"))?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Team repository (PG)
+// ---------------------------------------------------------------------------
+
+/// Repository for team metadata.
+#[async_trait]
+pub trait TeamRepository: Send + Sync {
+    /// Creates a team.
+    async fn create(&self, team: &Team) -> Result<(), ServiceError>;
+    /// Fetches a team by id.
+    async fn get(&self, id: TeamId) -> Result<Team, ServiceError>;
+    /// Lists all teams (newest first).
+    async fn list(&self) -> Result<Vec<Team>, ServiceError>;
+    /// Adds or updates a team membership.
+    async fn add_member(
+        &self,
+        team_id: TeamId,
+        user_id: UserId,
+        role: &str,
+    ) -> Result<(), ServiceError>;
+}
+
+/// PostgreSQL-backed team repository.
+#[derive(Debug, Clone)]
+pub struct PgTeamRepository {
+    pool: PgPool,
+}
+
+impl PgTeamRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+/// Row projection shared by `get`/`list`.
+type TeamRow = (
+    Uuid,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    OffsetDateTime,
+);
+
+#[async_trait]
+impl TeamRepository for PgTeamRepository {
+    async fn create(&self, team: &Team) -> Result<(), ServiceError> {
+        sqlx::query(
+            r"INSERT INTO teams (id, name, slug, description, storage_policy, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, $5, NOW(), NOW())",
+        )
+        .bind(team.id.as_uuid())
+        .bind(&team.name)
+        .bind(&team.slug)
+        .bind(&team.description)
+        .bind(&team.storage_policy)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("create team: {e}")))?;
+        Ok(())
+    }
+
+    async fn get(&self, id: TeamId) -> Result<Team, ServiceError> {
+        let row: Option<TeamRow> = sqlx::query_as::<_, TeamRow>(
+            r"SELECT id, name, slug, description, storage_policy, created_at FROM teams WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("get team: {e}")))?;
+        match row {
+            Some((id, name, slug, description, storage_policy, created_at)) => Ok(Team {
+                id: TeamId(id),
+                name,
+                slug,
+                description,
+                storage_policy,
+                created_at,
+            }),
+            None => Err(picroom_domain::DomainError::NotFound.into()),
+        }
+    }
+
+    async fn list(&self) -> Result<Vec<Team>, ServiceError> {
+        let rows: Vec<TeamRow> = sqlx::query_as::<_, TeamRow>(
+            r"SELECT id, name, slug, description, storage_policy, created_at FROM teams ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list teams: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, name, slug, description, storage_policy, created_at)| Team {
+                    id: TeamId(id),
+                    name,
+                    slug,
+                    description,
+                    storage_policy,
+                    created_at,
+                },
+            )
+            .collect())
+    }
+
+    async fn add_member(
+        &self,
+        team_id: TeamId,
+        user_id: UserId,
+        role: &str,
+    ) -> Result<(), ServiceError> {
+        sqlx::query(
+            r"INSERT INTO team_members (team_id, user_id, role, joined_at)
+              VALUES ($1, $2, $3, NOW())
+              ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+        )
+        .bind(team_id.as_uuid())
+        .bind(user_id.as_uuid())
+        .bind(role)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("add member: {e}")))?;
         Ok(())
     }
 }

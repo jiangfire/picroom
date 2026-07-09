@@ -9,7 +9,29 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use picroom_domain::StorageKey;
+use sha2::{Digest, Sha256};
+use std::path::Path as FsPath;
 use std::sync::Arc;
+
+/// Derives an S3-style quoted `ETag` (SHA-256 hex) from object bytes.
+fn etag_of(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    format!("\"{digest:x}\"")
+}
+
+/// Maps a storage key's file extension to a MIME type (defaults to octet-stream).
+fn content_type_of(key: &str) -> &'static str {
+    match FsPath::new(key).extension().and_then(|e| e.to_str()) {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("avif") => "image/avif",
+        Some("gif") => "image/gif",
+        _ => "application/octet-stream",
+    }
+}
 
 /// `GET /s3/:bucket/:key`
 pub async fn get_object<S: S3State>(
@@ -23,18 +45,18 @@ pub async fn get_object<S: S3State>(
     match state.storage().get(&storage_key).await {
         Ok(bytes) => (
             StatusCode::OK,
-            [("content-length", &bytes.len().to_string())],
+            [
+                ("content-length", bytes.len().to_string()),
+                ("content-type", content_type_of(&key).to_string()),
+                ("etag", etag_of(&bytes)),
+            ],
             bytes,
         )
             .into_response(),
         Err(picroom_storage::StorageError::NotFound(_)) => {
             s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key)
         }
-        Err(e) => s3_xml_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-            &e.to_string(),
-        ),
+        Err(e) => internal_error(e),
     }
 }
 
@@ -49,13 +71,10 @@ pub async fn put_object<S: S3State>(
         Ok(k) => k,
         Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
+    let etag = etag_of(&body);
     match state.storage().put(&storage_key, body).await {
-        Ok(()) => (StatusCode::OK, [("etag", "\"picroom\"")]).into_response(),
-        Err(e) => s3_xml_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-            &e.to_string(),
-        ),
+        Ok(()) => (StatusCode::OK, [("etag", etag)]).into_response(),
+        Err(e) => internal_error(e),
     }
 }
 
@@ -71,11 +90,7 @@ pub async fn head_object<S: S3State>(
     match state.storage().exists(&storage_key).await {
         Ok(true) => StatusCode::OK.into_response(),
         Ok(false) => s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key),
-        Err(e) => s3_xml_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-            &e.to_string(),
-        ),
+        Err(e) => internal_error(e),
     }
 }
 
@@ -92,12 +107,20 @@ pub async fn delete_object<S: S3State>(
         Ok(()) | Err(picroom_storage::StorageError::NotFound(_)) => {
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(e) => s3_xml_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-            &e.to_string(),
-        ),
+        Err(e) => internal_error(e),
     }
+}
+
+/// Internal server error: log the real cause server-side, but return a generic
+/// message to the client. Never leak storage paths, SQL errors, or stack detail
+/// (the API path already does this; the S3 path must too).
+fn internal_error<E: std::fmt::Display>(e: E) -> Response {
+    tracing::error!("s3 object operation failed: {e}");
+    s3_xml_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "InternalError",
+        "An internal error occurred",
+    )
 }
 
 /// Builds an S3-compatible XML error response.

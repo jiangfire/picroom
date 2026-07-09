@@ -11,7 +11,7 @@ use sqlx::PgPool;
 /// DB-backed audit sink. Inserts events into the `audit_events` table.
 #[derive(Debug, Clone)]
 pub struct DbAuditSink {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl DbAuditSink {

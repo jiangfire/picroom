@@ -27,7 +27,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }
-time = { workspace = true }
+time = { workspace = true, features = ["formatting", "parsing"] }
 sqlx = { workspace = true }
 
 [dev-dependencies]

@@ -62,6 +62,7 @@ logs/
 .cache/
 .maturin/
 .pytest_cache/
+.workbuddy/
 
 # OS
 *~

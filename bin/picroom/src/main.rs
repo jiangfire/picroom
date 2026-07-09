@@ -147,14 +147,14 @@ async fn main() -> ExitCode {
             run_team_cmd(cmd).await.map_err(|e| anyhow::anyhow!("{e}"))
         }
         Command::Admin(AdminCmd::Audit { follow, actor }) => {
-            match picroom_admin::audit_tail(follow, actor).await {
-                Ok(events) => {
-                    for ev in events {
-                        println!("{} {}", ev.timestamp, ev.action.as_str());
-                    }
-                    Ok(())
-                }
-                Err(e) => Err(anyhow::anyhow!("{e}")),
+            match std::env::var("PICROOM_DATABASE__URL") {
+                Ok(url) => match picroom_admin::user::open_pool(&url).await {
+                    Ok(pool) => picroom_admin::audit_tail(&pool, follow, actor)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}")),
+                    Err(e) => Err(anyhow::anyhow!("open pool: {e}")),
+                },
+                Err(_) => Err(anyhow::anyhow!("PICROOM_DATABASE__URL must be set")),
             }
         }
         Command::Admin(AdminCmd::Config(cmd)) => match cmd {

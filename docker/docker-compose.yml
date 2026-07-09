@@ -120,8 +120,12 @@ services:
       PICROOM_STORAGE__POLICIES__MINIO__BUCKET: "picroom"
       PICROOM_STORAGE__POLICIES__MINIO__ACCESS_KEY_ID: "picroom_dev"
       PICROOM_STORAGE__POLICIES__MINIO__SECRET_ACCESS_KEY: "picroom_dev_secret"
+      # SigV4 credentials for the S3-compatible endpoint (/s3/*). When set, the
+      # endpoint requires signed requests instead of being open to the network.
+      PICROOM_S3_ACCESS_KEY_ID: "picroom_dev"
+      PICROOM_S3_SECRET_ACCESS_KEY: "picroom_dev_secret"
       PICROOM_AUTH__ALLOW_SIGNUP: "true"
-      PICROOM_AUTH__JWT__SECRET: "dev-secret-do-not-use-in-prod"
+      PICROOM_AUTH__JWT_SECRET: "dev-secret-do-not-use-in-prod"
       PICROOM_LOGGING__LEVEL: "info"
       PICROOM_LOGGING__FORMAT: "json"
       RUST_LOG: "info,picroom=debug,sqlx=warn"
@@ -149,6 +153,9 @@ services:
         condition: service_completed_successfully
     environment:
       PICROOM_DATABASE__URL: "postgres://picroom:picroom_dev_secret@postgres/picroom"
+      # The worker does not issue/verify user JWTs, but require_strong_jwt_secret
+      # still runs at startup in release builds, so a non-default secret is required.
+      PICROOM_AUTH__JWT_SECRET: "dev-secret-do-not-use-in-prod"
       PICROOM_STORAGE__DEFAULT: "minio"
       PICROOM_STORAGE__POLICIES__MINIO__DRIVER: "minio"
       PICROOM_STORAGE__POLICIES__MINIO__ENDPOINT: "http://minio:9000"

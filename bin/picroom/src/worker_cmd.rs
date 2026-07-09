@@ -27,6 +27,7 @@ impl ImageLookup for StorageOnlyLookup {
         Ok(Image {
             id,
             owner_id: picroom_domain::UserId(uuid::Uuid::nil()),
+            team_id: None,
             key,
             content_type: "image/png".into(),
             bytes: 0,

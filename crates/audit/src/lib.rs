@@ -9,8 +9,10 @@
 
 pub mod db_sink;
 pub mod event;
+pub mod reader;
 pub mod sink;
 
 pub use db_sink::DbAuditSink;
 pub use event::{AuditAction, AuditEvent};
+pub use reader::AuditReader;
 pub use sink::{AuditSink, InMemoryAuditSink, NoopAuditSink};

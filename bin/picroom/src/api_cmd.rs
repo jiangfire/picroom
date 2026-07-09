@@ -70,6 +70,9 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         storage: deps.storage.clone(),
         audit: deps.audit.clone(),
         jwt,
+        permissions: Arc::new(picroom_service::PermissionService::new()),
+        team_repo: deps.team_repo.clone(),
+        audit_reader: deps.audit_reader.clone(),
         // S3 SigV4 enforcement is opt-in: set PICROOM_S3_ACCESS_KEY_ID +
         // PICROOM_S3_SECRET_ACCESS_KEY to require signed S3 requests.
         s3_credentials: read_s3_credentials(),
