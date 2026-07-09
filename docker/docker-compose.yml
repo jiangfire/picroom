@@ -69,6 +69,30 @@ services:
       - picroom-net
 
   # ----------------------------------------------------------------------
+  # Picroom migrate (one-shot: applies SQL migrations before api/worker)
+  # ----------------------------------------------------------------------
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: picroom:dev
+    container_name: picroom-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PICROOM_DATABASE__URL: "postgres://picroom:picroom_dev_secret@postgres/picroom"
+      PICROOM_LOGGING__LEVEL: "info"
+      PICROOM_LOGGING__FORMAT: "json"
+      RUST_LOG: "info,picroom=debug,sqlx=warn"
+    volumes:
+      - ./config.example.toml:/etc/picroom/config.toml:ro
+    command: ["admin", "migrate", "run", "--config", "/etc/picroom/config.toml"]
+    networks:
+      - picroom-net
+
+  # ----------------------------------------------------------------------
   # Picroom API
   # ----------------------------------------------------------------------
   api:
@@ -83,6 +107,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       PICROOM_SERVER__BIND_ADDR: "0.0.0.0:8080"
       PICROOM_DATABASE__URL: "postgres://picroom:picroom_dev_secret@postgres/picroom"
@@ -119,6 +145,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       PICROOM_DATABASE__URL: "postgres://picroom:picroom_dev_secret@postgres/picroom"
       PICROOM_STORAGE__DEFAULT: "minio"

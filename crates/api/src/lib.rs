@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom API
 //!
 //! HTTP API surface (REST + S3-compat).

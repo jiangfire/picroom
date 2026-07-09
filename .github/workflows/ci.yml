@@ -93,7 +93,7 @@ jobs:
       - run: cargo test --workspace --doc
 
   # ---------------------------------------------------------------------
-  # 5. Coverage (informational; not part of the required gate)
+  # 5. Coverage — enforced gate (spec §1.4 S5: ≥ 80 % line coverage)
   # ---------------------------------------------------------------------
   coverage:
     name: coverage
@@ -105,8 +105,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin --locked
+      # Enforces spec §1.4 S5. If this fails, add tests or file an issue
+      # documenting a temporary threshold adjustment with a remediation plan.
       - name: Run coverage
-        run: cargo tarpaulin --workspace --out Xml --output-dir target/coverage
+        run: cargo tarpaulin --workspace --fail-under 80 --out Xml --output-dir target/coverage
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -125,7 +127,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0111
+      # Waivers for the two known dev-only (testcontainers) advisories live in
+      # audit.toml with rationale + review date — not as silent CLI flags.
+      - run: cargo audit
 
   # ---------------------------------------------------------------------
   # 7. License / dependency policy (cargo-deny)
@@ -338,6 +342,7 @@ jobs:
       - clippy
       - test
       - doctest
+      - coverage
       - audit
       - deny
       - postgres-integration

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Driver implementations of the storage traits.
 //!
 //! Each driver is feature-gated and exposes a single struct that implements

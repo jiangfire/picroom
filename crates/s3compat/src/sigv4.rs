@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! AWS Signature V4 verifier.
 //!
 //! Implements the canonical request, string-to-sign, and signing-key
@@ -7,6 +10,7 @@
 use crate::S3Error;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use time::OffsetDateTime;
 
 /// A parsed S3 V4 authorization header.
@@ -191,13 +195,16 @@ pub fn verify(
         &parsed.service,
     );
     let expected = sign(&key, &s2s);
-    if expected.eq_ignore_ascii_case(&parsed.signature) {
+    // Constant-time comparison to avoid leaking the matching prefix length
+    // via timing. Both sides are lowercase hex; compare their bytes directly.
+    if expected
+        .as_bytes()
+        .ct_eq(parsed.signature.as_bytes())
+        .into()
+    {
         Ok(())
     } else {
-        Err(S3Error::SignatureMismatch {
-            expected,
-            got: parsed.signature.clone(),
-        })
+        Err(S3Error::SignatureMismatch)
     }
 }
 

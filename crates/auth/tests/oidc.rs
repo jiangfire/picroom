@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Integration tests for the OIDC HTTP client.
 //!
 //! Uses `wiremock` to stub the discovery + token + userinfo endpoints.

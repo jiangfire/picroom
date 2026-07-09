@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Job processor: turns an `ImageJob` into one or more stored variants.
 
 use crate::dlq::{DlqEntry, DlqSink};
@@ -110,7 +113,7 @@ async fn encode_variant(
         .map_err(|e| format!("encode: {e}"))?;
 
     // Persist variant to storage.
-    let key = variant_key(&image, kind);
+    let key = variant_key(&image, kind)?;
     deps.storage
         .put(&key, bytes.clone())
         .await
@@ -147,15 +150,10 @@ async fn encode_variant(
     })
 }
 
-fn variant_key(image: &Image, kind: &str) -> StorageKey {
+fn variant_key(image: &Image, kind: &str) -> Result<StorageKey, String> {
     let id = image.id.as_uuid();
     let key = format!("img/{id}/{kind}");
-    StorageKey::parse(&key).unwrap_or_else(|_| {
-        StorageKey::parse("img/unknown").unwrap_or_else(|_| {
-            // Ultimate fallback: should never happen with valid inputs.
-            panic!("StorageKey::parse failed for generated key: {key}")
-        })
-    })
+    StorageKey::parse(&key).map_err(|e| format!("invalid variant key \"{key}\": {e}"))
 }
 
 fn avif_encode(img: &image::DynamicImage) -> Result<Bytes, String> {
@@ -231,7 +229,7 @@ mod tests {
             variants: vec![],
             created_at: time::OffsetDateTime::now_utc(),
         };
-        let k = variant_key(&img, "avif");
+        let k = variant_key(&img, "avif").expect("valid key");
         assert_eq!(k.as_str(), &format!("img/{id}/avif"));
     }
 }

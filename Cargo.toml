@@ -20,6 +20,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT"
+publish = false
 repository = "https://github.com/picroom/picroom"
 homepage = "https://picroom.dev"
 authors = ["Picroom Maintainers <maintainers@picroom.dev>"]
@@ -31,17 +32,17 @@ tokio = { version = "1.40", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 async-trait = "0.1"
 futures = "0.3"
-bytes = "1"
+bytes = "1.12"
 
 # HTTP
 axum = { version = "0.7", features = ["macros", "multipart", "http2"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "limit"] }
-hyper = { version = "1", features = ["full"] }
+hyper = { version = "1.10", features = ["full"] }
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serde_yaml = "0.9"
 serde_urlencoded = "0.7"
 
@@ -62,30 +63,33 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.27"
 opentelemetry = { version = "0.26", features = ["trace"] }
 metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
 
 # Errors
-thiserror = "1"
-anyhow = "1"
+thiserror = "1.0"
+anyhow = "1.0"
 
 # Configuration
 figment = { version = "0.10", features = ["toml", "env"] }
 
 # Time & IDs
 time = { version = "0.3", features = ["serde", "macros"] }
-uuid = { version = "1", features = ["v7", "serde"] }
+uuid = { version = "1.23", features = ["v7", "serde"] }
 
 # Crypto / auth
 argon2 = "0.5"
-jsonwebtoken = "9"
+jsonwebtoken = "9.3"
 rand = "0.8"
 sha2 = "0.10"
+# Constant-time comparisons (SigV4 signature verification).
+subtle = "2.6"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # AWS / S3
-aws-sigv4 = "1"
-aws-credential-types = "1"
+# (aws-sigv4 / aws-credential-types removed 2026-07: declared but never used —
+#  S3 SigV4 is implemented in-house in crates/s3compat. See docs/review-2026-07.md.)
 quick-xml = { version = "0.41", features = ["serialize"] }
 
 # Image processing
@@ -94,39 +98,40 @@ ravif = { version = "0.11", default-features = false }
 rgb = "0.8"
 
 # OpenAPI
-utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
-utoipa-swagger-ui = "8"
+# (utoipa / utoipa-swagger-ui removed 2026-07: declared but never imported —
+#  docs/api/openapi.yaml is hand-authored. See docs/review-2026-07.md §3.9.)
 
 # CLI
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 
 # Misc
-url = { version = "2", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
 rand_core = "0.6"
 
-# Internal crates
-picroom-domain = { path = "crates/domain" }
-picroom-storage = { path = "crates/storage" }
-picroom-imaging = { path = "crates/imaging" }
-picroom-auth = { path = "crates/auth" }
-picroom-audit = { path = "crates/audit" }
-picroom-service = { path = "crates/service" }
-picroom-api = { path = "crates/api" }
-picroom-s3compat = { path = "crates/s3compat" }
-picroom-worker = { path = "crates/worker" }
-picroom-infra = { path = "crates/infra" }
-picroom-admin = { path = "crates/admin" }
+# Internal crates — pinned to the workspace version so the graph is fully
+# versioned (spec §7.1) and cargo-deny's wildcard check is satisfied.
+picroom-domain = { path = "crates/domain", version = "0.1.0" }
+picroom-storage = { path = "crates/storage", version = "0.1.0" }
+picroom-imaging = { path = "crates/imaging", version = "0.1.0" }
+picroom-auth = { path = "crates/auth", version = "0.1.0" }
+picroom-audit = { path = "crates/audit", version = "0.1.0" }
+picroom-service = { path = "crates/service", version = "0.1.0" }
+picroom-api = { path = "crates/api", version = "0.1.0" }
+picroom-s3compat = { path = "crates/s3compat", version = "0.1.0" }
+picroom-worker = { path = "crates/worker", version = "0.1.0" }
+picroom-infra = { path = "crates/infra", version = "0.1.0" }
+picroom-admin = { path = "crates/admin", version = "0.1.0" }
 
 # Dev / test dependencies (used in crate [dev-dependencies])
 mockall = "0.13"
-proptest = "1"
+proptest = "1.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 wiremock = "0.6"
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres", "minio"] }
 rstest = "0.24"
-insta = { version = "1", features = ["yaml"] }
-pretty_assertions = "1"
+insta = { version = "1.48", features = ["yaml"] }
+pretty_assertions = "1.4"
 tokio-test = "0.4"
 
 [profile.release]

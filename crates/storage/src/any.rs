@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Zero-cost enum dispatch over all storage drivers.
 //!
 //! Use this when a service needs to operate on "any storage backend"

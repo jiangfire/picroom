@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! `picroom api` subcommand.
 
 use crate::app::{build_deps, DatabaseHandle};
@@ -53,7 +56,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
 
     // Build AppState with JWT service.
     // Security: refuse to start with the default dev secret in release mode.
-    assert!(!(cfg!(not(debug_assertions)) && cfg.auth.jwt_secret == "change-me"), "PICROOM_AUTH__JWT_SECRET is set to the default value \"change-me\". Set a strong random secret before running in production.");
+    picroom_infra::require_strong_jwt_secret(&cfg).map_err(|e| anyhow::anyhow!("{e}"))?;
     let jwt = Arc::new(picroom_auth::JwtService::new(
         cfg.auth.jwt_secret.clone(),
         cfg.auth.jwt_issuer.clone(),
@@ -63,10 +66,13 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
     let state = Arc::new(AppState {
         upload: Arc::new(upload),
         image_repo: deps.image_repo.clone(),
+        user_repo: deps.user_repo.clone(),
         storage: deps.storage.clone(),
         audit: deps.audit.clone(),
         jwt,
-        dev_user: picroom_domain::UserId(uuid::Uuid::nil()),
+        // S3 SigV4 enforcement is opt-in: set PICROOM_S3_ACCESS_KEY_ID +
+        // PICROOM_S3_SECRET_ACCESS_KEY to require signed S3 requests.
+        s3_credentials: read_s3_credentials(),
     });
 
     // Build router with body size limit.
@@ -92,4 +98,16 @@ fn schema_of(url: &str) -> &str {
     } else {
         "unknown"
     }
+}
+
+/// Reads an optional S3 client credential from the environment. When both
+/// `PICROOM_S3_ACCESS_KEY_ID` and `PICROOM_S3_SECRET_ACCESS_KEY` are present,
+/// the S3 endpoint verifies `SigV4` signatures against them.
+fn read_s3_credentials() -> Option<picroom_s3compat::S3Credential> {
+    let access_key = std::env::var("PICROOM_S3_ACCESS_KEY_ID").ok()?;
+    let secret = std::env::var("PICROOM_S3_SECRET_ACCESS_KEY").ok()?;
+    if access_key.is_empty() || secret.is_empty() {
+        return None;
+    }
+    Some(picroom_s3compat::S3Credential { access_key, secret })
 }

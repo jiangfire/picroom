@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Router construction.
 
-use crate::extractors::auth::require_auth;
 use crate::state::AppState;
 use axum::middleware;
 use axum::routing::{get, post};
@@ -39,9 +41,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/audit", get(super::handlers::admin::audit))
         // S3-compat (open — SigV4 verified per-request)
-        .nest("/s3", picroom_s3compat::s3_router::<AppState>())
-        // Auth middleware on all /api/v1/* routes (login/logout excluded)
-        .route_layer(middleware::from_fn(require_auth))
+        .nest(
+            "/s3",
+            picroom_s3compat::s3_router::<AppState>(state.clone()),
+        )
+        // Auth middleware on all /api/v1/* routes (login/logout excluded).
+        // Verifies the JWT signature so forged tokens are rejected at the gate.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::extractors::auth::require_auth::<Arc<AppState>>,
+        ))
         // Shared state
         .with_state(state)
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Storage round-trip test subcommand (skeleton).
 
 use bytes::Bytes;

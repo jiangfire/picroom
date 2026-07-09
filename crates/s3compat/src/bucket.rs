@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Bucket dispatch.
 
 use picroom_domain::StorageKey;

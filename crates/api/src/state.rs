@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Application state shared across handlers.
 
 use async_trait::async_trait;
@@ -5,15 +8,14 @@ use bytes::Bytes;
 use picroom_audit::AuditSink;
 use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
-use picroom_domain::UserId;
 use picroom_service::repo::ImageRepository;
+use picroom_service::repo::UserRepository;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
-use uuid::Uuid;
 
 use crate::extractors::auth::JwtProvider;
 
@@ -27,14 +29,16 @@ pub struct AppState {
     pub upload: Arc<DynUploadService>,
     /// Image repository (DB-backed).
     pub image_repo: Option<Arc<dyn ImageRepository>>,
+    /// User repository (used by the login handler to verify credentials).
+    pub user_repo: Option<Arc<dyn UserRepository>>,
     /// Storage (full set of capabilities).
     pub storage: Arc<dyn Storage>,
     /// Audit sink.
     pub audit: Arc<dyn AuditSink>,
     /// JWT service for auth.
     pub jwt: Arc<JwtService>,
-    /// Dev-mode user (fallback when auth disabled).
-    pub dev_user: UserId,
+    /// Optional S3 client credential; when set, the S3 endpoint enforces `SigV4`.
+    pub s3_credentials: Option<picroom_s3compat::S3Credential>,
 }
 
 impl JwtProvider for AppState {
@@ -63,6 +67,7 @@ impl AppState {
         Self {
             upload,
             image_repo: None,
+            user_repo: None,
             storage: storage as Arc<dyn Storage>,
             audit: audit as Arc<dyn AuditSink>,
             jwt: Arc::new(JwtService::new(
@@ -71,8 +76,15 @@ impl AppState {
                 "picroom-api",
                 3600,
             )),
-            dev_user: UserId(Uuid::nil()),
+            s3_credentials: None,
         }
+    }
+
+    /// Attaches a user repository so the login handler can verify credentials.
+    #[must_use]
+    pub fn with_user_repo(mut self, repo: Arc<dyn UserRepository>) -> Self {
+        self.user_repo = Some(repo);
+        self
     }
 
     /// Attaches an optional job queue so uploads enqueue variant jobs.
@@ -103,6 +115,10 @@ impl AppState {
 impl picroom_s3compat::S3State for AppState {
     fn storage(&self) -> &Arc<dyn Storage> {
         &self.storage
+    }
+
+    fn s3_credentials(&self) -> Option<picroom_s3compat::S3Credential> {
+        self.s3_credentials.clone()
     }
 }
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Shared contract test for all storage drivers.
 //!
 //! Every driver implementation should run `put_get_delete_roundtrip` to

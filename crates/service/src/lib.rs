@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Service
 //!
 //! Use-case orchestration layer.
@@ -17,5 +20,8 @@ pub use error::ServiceError;
 pub use permission::PermissionService;
 pub use query::ImageQueryService;
 pub use quota::QuotaService;
-pub use repo::{ImageRepository, PgImageRepository, PgVariantRepository};
+pub use repo::{
+    ImageRepository, PgImageRepository, PgUserRepository, PgVariantRepository, UserCredentials,
+    UserRepository,
+};
 pub use upload::UploadService;

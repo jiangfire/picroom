@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Auth middleware — re-exports from `extractors::auth`.
 //!
 //! The real `require_auth` middleware lives in

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Auth extractors and middleware.
 
 use axum::extract::FromRequestParts;
@@ -64,27 +67,38 @@ pub trait JwtProvider {
     fn jwt_service(&self) -> &picroom_auth::JwtService;
 }
 
-/// Auth middleware: requires `Authorization: Bearer` on `/api/v1/*`
-/// except `/api/v1/auth/*`.
-pub async fn require_auth(
+/// Auth middleware: requires a **valid** `Authorization: Bearer <jwt>` on
+/// `/api/v1/*` except `/api/v1/auth/*`.
+///
+/// Unlike a presence-only check, this verifies the token signature and expiry
+/// against the configured [`JwtService`], so `Bearer garbage` is rejected with
+/// `401`. Handlers may additionally use the [`AuthUser`] extractor to obtain
+/// the authenticated principal.
+pub async fn require_auth<S>(
+    axum::extract::State(state): axum::extract::State<S>,
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
-) -> Result<axum::response::Response, StatusCode> {
+) -> Result<axum::response::Response, StatusCode>
+where
+    S: JwtProvider,
+{
     let path = req.uri().path();
-    // Skip auth routes.
-    if path.starts_with("/api/v1/auth/") || path == "/api/v1/auth/logout" {
+    // Login/logout and other auth-flow routes are public.
+    if path.starts_with("/api/v1/auth/") {
         return Ok(next.run(req).await);
     }
-    // For other /api/v1/* endpoints, require a Bearer token.
     if path.starts_with("/api/v1/") {
-        let has_token = req
+        let token = req
             .headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.starts_with("Bearer "));
-        if !has_token {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(StatusCode::UNAUTHORIZED)?;
+        // Reject forged/expired tokens at the gate.
+        state
+            .jwt_service()
+            .verify(token)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
     }
     Ok(next.run(req).await)
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! `SigV4` and other signing helpers.
 //!
 //! Placeholder for Phase 3 — real implementation arrives in Phase 10.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Role definitions.
 
 use crate::permission::{Permission, PermissionAction, ResourceType};

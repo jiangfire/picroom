@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Audit sinks.
 
 use crate::event::AuditEvent;
@@ -45,7 +48,12 @@ impl InMemoryAuditSink {
 
     /// Returns a snapshot of recorded events.
     pub fn events(&self) -> Vec<AuditEvent> {
-        self.events.lock().expect("mutex poisoned").clone()
+        // Recover from poison rather than panic — audit snapshots are
+        // best-effort; a poisoned lock shouldn't bring down the process.
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -54,7 +62,7 @@ impl AuditSink for InMemoryAuditSink {
     async fn record(&self, event: &AuditEvent) -> Result<(), AuditSinkError> {
         self.events
             .lock()
-            .expect("mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(event.clone());
         Ok(())
     }

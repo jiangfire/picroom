@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Role-based access control engine.
 //!
 //! See ADR-0005 for the full model.

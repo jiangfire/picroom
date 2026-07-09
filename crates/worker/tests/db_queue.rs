@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Integration tests for the SQLite-backed `JobQueue`.
 //!
 //! These exercise the full enqueue → dequeue → complete → verify path

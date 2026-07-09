@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Configuration loading via `figment`.
 //!
 //! Source order (later overrides earlier):
@@ -277,8 +280,35 @@ pub fn load_config_from<P: AsRef<std::path::Path>>(path: Option<P>) -> Result<Co
         fig = fig.merge(Toml::file(p));
     }
     fig = fig.merge(Env::prefixed("PICROOM_").split("__"));
-    fig.extract()
-        .map_err(|e| ConfigError::Figment(e.to_string()))
+    let cfg: Config = fig
+        .extract()
+        .map_err(|e| ConfigError::Figment(e.to_string()))?;
+    warn_on_default_jwt_secret(&cfg);
+    Ok(cfg)
+}
+
+/// Logs a warning when the JWT secret is still the compiled-in default.
+fn warn_on_default_jwt_secret(cfg: &Config) {
+    const DEFAULT: &str = "change-me";
+    if cfg.auth.jwt_secret == DEFAULT {
+        tracing::warn!(
+            "PICROOM_AUTH__JWT_SECRET is the default \"{DEFAULT}\"; set a strong \
+             random secret before exposing the service. Release builds refuse to start."
+        );
+    }
+}
+
+/// Refuses to proceed when the JWT secret is the default in a non-debug
+/// (release) build. Called by both the API and worker binaries at startup.
+pub fn require_strong_jwt_secret(cfg: &Config) -> Result<(), String> {
+    if cfg!(not(debug_assertions)) && cfg.auth.jwt_secret == "change-me" {
+        return Err(
+            "PICROOM_AUTH__JWT_SECRET is the default \"change-me\". Set a strong \
+             random secret before running in production."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

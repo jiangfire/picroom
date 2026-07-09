@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Picroom — single binary entry point.
 //!
 //! Dispatches to `api`, `worker`, or `admin` subcommands.

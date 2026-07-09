@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Probe processor — reads image metadata.
 //!
 //! Populates `PipelineContext::width`, `height`, `mime_type` from the

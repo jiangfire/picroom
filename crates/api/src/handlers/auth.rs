@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Auth handlers — login, logout, OIDC.
 
 use crate::error::ApiError;
@@ -6,29 +9,53 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use picroom_auth::PasswordHasher;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
 /// `POST /api/v1/auth/login`
 ///
-/// Accepts `{ "email": "...", "password": "..." }`.
-/// Validates against the DB, issues a JWT.
+/// Accepts `{ "email": "...", "password": "..." }`, looks the user up in the
+/// `users` table, verifies the Argon2id hash, and issues a JWT whose `sub` is
+/// the user id and whose `scopes` carry the user's role.
+///
+/// Returns `401` for unknown email, wrong password, or a disabled account —
+/// the message is identical in all three cases so an attacker cannot enumerate
+/// valid emails via timing or response shape.
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Look up the user from the configured image_repo or a future user repository.
-    // For now, we stub login with a dev user and issue a JWT.
-    //
-    // Full implementation (post-MVP) queries the `users` table, verifies
-    // the password hash via `PasswordHasher::verify`, and returns a JWT.
-    //
-    // See ADR-0007 P1-3.
+    let Some(user_repo) = &state.user_repo else {
+        return Err(ApiError::internal("user repository not configured"));
+    };
 
+    // Look the user up by email.
+    let creds = user_repo
+        .find_by_email(&body.email)
+        .await
+        .map_err(|e| ApiError::internal(format!("lookup: {e}")))?
+        .ok_or_else(|| ApiError::unauthorized("invalid credentials"))?;
+
+    // Reject disabled accounts with the same error as "no such user".
+    if creds.disabled {
+        return Err(ApiError::unauthorized("invalid credentials"));
+    }
+
+    // Verify the password against the stored Argon2id hash.
+    let password_ok = PasswordHasher::new()
+        .verify(&body.password, &creds.password_hash)
+        .map_err(|e| ApiError::internal(format!("verify: {e}")))?;
+    if !password_ok {
+        return Err(ApiError::unauthorized("invalid credentials"));
+    }
+
+    // Issue a JWT keyed on the user id (not the email) with the role as scope.
+    let scopes = vec![creds.role.clone()];
     let token = state
         .jwt
-        .issue(body.email)
+        .issue_with_scopes(creds.id.to_string(), &scopes)
         .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
 
     Ok(Json(json!({

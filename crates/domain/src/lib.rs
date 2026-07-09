@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Domain
 //!
 //! Pure domain types, value objects, traits, and errors for Picroom.

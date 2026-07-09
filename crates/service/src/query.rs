@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Image query use case.
 
 use crate::repo::ImageRepository;
 use crate::ServiceError;
-use bytes::Bytes;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
-use picroom_domain::{DomainError, Image, ImageId, Page, PageReq};
+use picroom_domain::{Image, ImageId, Page, PageReq};
 use picroom_storage::StorageError;
 use picroom_storage::StorageWriter;
 use std::sync::Arc;
@@ -69,15 +71,5 @@ impl ImageQueryService {
         };
         audit.record(&event).await.map_err(ServiceError::Audit)?;
         Ok(())
-    }
-
-    /// Stub helper for callers that don't have a repo yet (skeleton compat).
-    pub async fn _stub(&self, _id: ImageId) -> Result<Image, ServiceError> {
-        Err(DomainError::NotFound.into())
-    }
-
-    /// Placeholder; removed once repository wiring is complete.
-    pub const fn _bytes() -> Bytes {
-        Bytes::new()
     }
 }

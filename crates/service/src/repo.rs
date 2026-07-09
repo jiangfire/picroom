@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Image repository — DB-backed persistence for `Image` entities.
 //!
 //! Trait + Postgres implementation. `SQLite` fallback lives in
@@ -5,7 +8,7 @@
 
 use crate::ServiceError;
 use async_trait::async_trait;
-use picroom_domain::{Image, ImageId, Page, PageReq};
+use picroom_domain::{Image, ImageId, Page, PageReq, UserId};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -25,6 +28,8 @@ pub trait ImageRepository: Send + Sync {
     ) -> Result<Page<Image>, ServiceError>;
     /// Deletes an image by id.
     async fn delete(&self, id: ImageId) -> Result<(), ServiceError>;
+    /// Liveness probe — runs a cheap `SELECT 1`.
+    async fn ping(&self) -> Result<(), ServiceError>;
 }
 
 /// PostgreSQL-backed image repository.
@@ -127,6 +132,14 @@ impl ImageRepository for PgImageRepository {
             .map_err(|e| ServiceError::Internal(format!("delete image: {e}")))?;
         Ok(())
     }
+
+    async fn ping(&self) -> Result<(), ServiceError> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("db ping: {e}")))?;
+        Ok(())
+    }
 }
 
 /// Row representation matching `images` table columns.
@@ -173,6 +186,66 @@ impl TryFrom<ImageRow> for Image {
             variants: vec![],
             created_at: r.created_at,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// User repository (PG) — credential lookup for login
+// ---------------------------------------------------------------------------
+
+/// Credentials needed to verify a login attempt.
+///
+/// Returned by [`UserRepository::find_by_email`]. Intentionally minimal: only
+/// the fields required to authenticate and issue a token.
+#[derive(Debug, Clone)]
+pub struct UserCredentials {
+    /// Stable user id (becomes the JWT `sub`).
+    pub id: UserId,
+    /// Global role name (e.g. `"admin"`).
+    pub role: String,
+    /// Argon2id password hash.
+    pub password_hash: String,
+    /// Whether the account is soft-disabled.
+    pub disabled: bool,
+}
+
+/// Repository for user authentication data.
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    /// Looks up credentials by email. `Ok(None)` means "no such user".
+    async fn find_by_email(&self, email: &str) -> Result<Option<UserCredentials>, ServiceError>;
+}
+
+/// PostgreSQL-backed user repository.
+#[derive(Debug, Clone)]
+pub struct PgUserRepository {
+    pool: PgPool,
+}
+
+impl PgUserRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl UserRepository for PgUserRepository {
+    async fn find_by_email(&self, email: &str) -> Result<Option<UserCredentials>, ServiceError> {
+        let row: Option<(Uuid, String, String, bool)> =
+            sqlx::query_as(r"SELECT id, role, password_hash, disabled FROM users WHERE email = $1")
+                .bind(email)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| ServiceError::Internal(format!("find user: {e}")))?;
+        Ok(
+            row.map(|(id, role, password_hash, disabled)| UserCredentials {
+                id: UserId(id),
+                role,
+                password_hash,
+                disabled,
+            }),
+        )
     }
 }
 

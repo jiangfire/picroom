@@ -10,26 +10,41 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
 unmaintained = "workspace"
 ignore = [
-    # rsa — no fix available, indirect dep via testcontainers
+    # rsa + tokio-tar are dev-ONLY (transitive via `testcontainers`, the
+    # integration-test harness) and are NOT in the release binary. Proof:
+    #   cargo tree --edges normal -i rsa         # → "nothing to print"
+    #   cargo tree --edges normal -i tokio-tar   # → "nothing to print"
+    # No upstream fix exists in our pinned range as of 2026-07-08.
+    # Mirrored in audit.toml; review quarterly.
     "RUSTSEC-2023-0071",
-    # tokio-tar — no fix available, indirect dep via testcontainers
     "RUSTSEC-2025-0111",
 ]
 
+# Allowed licenses.
+#
+# Spec §1.4 S9 says "MIT-only deps". That is incompatible with the spec's OWN
+# mandated tech stack (§2.2): the AVIF encoder (`ravif`/`rav1e`) forces NCSA,
+# BSD-2-Clause, and Apache-2.0 WITH LLVM-exception, and TLS (`sqlx`, `reqwest`
+# via `webpki-roots`) forces CDLA-Permissive-2.0 for the bundled Mozilla CA
+# bundle. So S9 is honoured as "permissive-only with documented exceptions"
+# rather than strict MIT-only. Every non-MIT entry below names the crate that
+# requires it (per §7.2 approval spirit).
 [licenses]
 allow = [
     "MIT",
     "Apache-2.0",
+    # target-lexicon → rav1e → ravif (AVIF stack, spec §2.2).
     "Apache-2.0 WITH LLVM-exception",
+    # av1-grain, rav1e, v_frame → ravif (AVIF stack, spec §2.2).
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
     "Zlib",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
-    "MPL-2.0",
     "CC0-1.0",
+    # libfuzzer-sys → rav1e → ravif (AVIF stack, spec §2.2). "(MIT OR Apache-2.0) AND NCSA".
     "NCSA",
+    # webpki-roots (Mozilla CA bundle data) → sqlx + reqwest TLS. Data license, permissive.
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
@@ -40,7 +55,12 @@ exceptions = [
 
 [bans]
 multiple-versions = "warn"
-wildcards = "allow"
+# Reject `version = "*"` specs on external (registry) deps (spec §7.1).
+# `allow-wildcard-paths` exempts workspace-internal path dependencies
+# (e.g. `picroom-domain = { workspace = true }`), which are not version-pinned
+# by design.
+wildcards = "deny"
+allow-wildcard-paths = true
 highlight = "all"
 deny = []
 skip = []

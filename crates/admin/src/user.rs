@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! User admin subcommands — DB-backed.
 //!
 //! Realises `picroom admin user create | list | set-role | disable`.

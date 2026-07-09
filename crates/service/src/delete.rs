@@ -1,4 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Delete use case.
+//!
+//! ⚠️ **DEFERRED STUB.** `DeleteService::delete` currently only emits an audit
+//! event; it does **not** remove the storage object or the DB row. The live
+//! HTTP `DELETE /api/v1/images/:id` handler performs the real deletion
+//! directly (storage + repo) and bypasses this service. A full implementation
+//! would look up the image, delete its variants + original from storage, then
+//! the DB row. See `docs/review-2026-07.md` §3.3.
 
 use crate::ServiceError;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
@@ -7,7 +17,7 @@ use picroom_storage::StorageWriter;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Delete service (skeleton).
+/// Delete service (deferred stub — see module docs).
 #[derive(Debug, Clone)]
 pub struct DeleteService<S: StorageWriter, A: AuditSink> {
     #[allow(dead_code)]

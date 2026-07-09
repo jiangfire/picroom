@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! AWS S3 driver.
 //!
 //! Implements the `Storage` trait family against any S3-compatible

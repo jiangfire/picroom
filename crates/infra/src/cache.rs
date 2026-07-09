@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Cache trait + in-memory implementation.
 
 use async_trait::async_trait;
@@ -44,7 +47,13 @@ impl InMemoryCache {
 #[async_trait]
 impl Cache for InMemoryCache {
     async fn get(&self, key: &str) -> Result<Vec<u8>, CacheError> {
-        let guard = self.inner.read().unwrap();
+        // Recover from a poisoned lock rather than panicking: for an in-memory
+        // cache the worst case is a stale value, which is preferable to taking
+        // the process down.
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((v, expires_at)) = guard.get(key) {
             if Instant::now() < *expires_at {
                 return Ok(v.clone());
@@ -56,13 +65,16 @@ impl Cache for InMemoryCache {
     async fn set(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), CacheError> {
         self.inner
             .write()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key.to_string(), (value, Instant::now() + ttl));
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
-        self.inner.write().unwrap().remove(key);
+        self.inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key);
         Ok(())
     }
 }

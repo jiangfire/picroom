@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! JWT issuing and verification.
 
 use jsonwebtoken::{
@@ -67,8 +70,21 @@ impl JwtService {
         }
     }
 
-    /// Issues a JWT for `subject`.
+    /// Issues a JWT for `subject` with no scopes.
+    ///
+    /// Prefer [`Self::issue_with_scopes`] for interactive login so the token
+    /// carries the user's role(s); `AuthUser` relies on `scopes` to reconstruct
+    /// [`crate::Role`]s.
     pub fn issue(&self, subject: impl Into<String>) -> Result<String, JwtError> {
+        self.issue_with_scopes(subject, &[])
+    }
+
+    /// Issues a JWT for `subject` carrying the given `scopes` (e.g. role names).
+    pub fn issue_with_scopes(
+        &self,
+        subject: impl Into<String>,
+        scopes: &[String],
+    ) -> Result<String, JwtError> {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let claims = JwtClaims {
             sub: subject.into(),
@@ -76,7 +92,7 @@ impl JwtService {
             aud: self.audience.clone(),
             iat: now,
             exp: now + self.ttl_seconds,
-            scopes: Vec::new(),
+            scopes: scopes.to_vec(),
         };
         encode(
             &Header::default(),
@@ -126,5 +142,22 @@ mod tests {
         let s2 = JwtService::new("b", "iss", "aud", 60);
         let t = s1.issue("u").unwrap();
         assert!(s2.verify(&t).is_err());
+    }
+
+    #[test]
+    fn issue_with_scopes_roundtrips() {
+        let s = JwtService::new("secret", "iss", "aud", 60);
+        let scopes = vec!["admin".to_string()];
+        let token = s.issue_with_scopes("user-9", &scopes).unwrap();
+        let claims = s.verify(&token).unwrap();
+        assert_eq!(claims.sub, "user-9");
+        assert_eq!(claims.scopes, vec!["admin".to_string()]);
+    }
+
+    #[test]
+    fn issue_has_empty_scopes_by_default() {
+        let s = JwtService::new("secret", "iss", "aud", 60);
+        let claims = s.verify(&s.issue("u").unwrap()).unwrap();
+        assert!(claims.scopes.is_empty());
     }
 }

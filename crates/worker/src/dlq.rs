@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Dead-letter queue.
 
 use async_trait::async_trait;
@@ -39,14 +42,20 @@ impl InMemoryDlq {
 
     /// Returns a snapshot of all entries.
     pub fn entries(&self) -> Vec<DlqEntry> {
-        self.entries.lock().expect("mutex poisoned").clone()
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
 #[async_trait]
 impl DlqSink for InMemoryDlq {
     async fn push(&self, entry: DlqEntry) -> Result<(), String> {
-        self.entries.lock().expect("mutex poisoned").push(entry);
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(entry);
         Ok(())
     }
 }

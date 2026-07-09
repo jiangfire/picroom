@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Thumbnail processor — generates multiple smaller variants.
 
 use super::{Processor, ProcessorError, ProcessorOutput};

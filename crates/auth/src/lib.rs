@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Auth
 //!
 //! Authentication, authorization, and RBAC.

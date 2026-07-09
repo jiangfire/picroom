@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Error → HTTP mapping.
 
 use axum::http::StatusCode;
@@ -55,8 +58,18 @@ impl ApiError {
     }
 
     /// 500 Internal Server Error.
+    ///
+    /// The detail is **logged server-side only**; clients always receive a
+    /// generic message so that storage backends, SQL errors, and filesystem
+    /// paths are never leaked to callers (see docs/review-2026-07.md §3.7).
     pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", message)
+        let detail = message.into();
+        tracing::error!(error = %detail, "internal api error");
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal server error",
+        )
     }
 
     /// Attaches a request id.

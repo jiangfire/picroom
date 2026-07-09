@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! `MinIO` driver — convenience constructor for [`S3Driver`].
 //!
 //! Alias for [`S3Driver`] with sensible defaults for `MinIO` deployments.

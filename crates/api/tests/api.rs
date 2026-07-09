@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Integration test for the HTTP API.
 
 use axum::body::Body;
@@ -6,11 +9,25 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use picroom_api::AppState;
 use picroom_audit::NoopAuditSink;
+use picroom_service::{ServiceError, UserCredentials, UserRepository};
 use picroom_storage::driver::LocalDriver;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+/// In-memory user repository for login tests.
+struct InMemoryUserRepo {
+    users: HashMap<String, UserCredentials>,
+}
+
+#[async_trait::async_trait]
+impl UserRepository for InMemoryUserRepo {
+    async fn find_by_email(&self, email: &str) -> Result<Option<UserCredentials>, ServiceError> {
+        Ok(self.users.get(email).cloned())
+    }
+}
 
 fn make_png(w: u32, h: u32) -> Bytes {
     use std::io::Cursor;
@@ -36,10 +53,14 @@ fn build_app() -> axum::Router {
     picroom_api::build_router(state)
 }
 
-/// Returns a valid Bearer token for the dev JWT service.
+/// Returns a valid Bearer token for the dev JWT service. The token carries a
+/// real UUID subject and the `admin` scope so it passes the `AuthUser`
+/// extractor (which parses `sub` as a UUID and maps `scopes` to roles).
 fn bearer_token() -> String {
     let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
-    format!("Bearer {}", jwt.issue("test@example.com").unwrap())
+    let scopes = vec!["admin".to_string()];
+    let id = uuid::Uuid::now_v7();
+    format!("Bearer {}", jwt.issue_with_scopes(id, &scopes).unwrap())
 }
 
 #[tokio::test]
@@ -212,4 +233,158 @@ async fn upload_empty_bytes_returns_400() {
         "got {:?}, expected 400 or 500",
         response.status()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Login handler — password verification
+// ---------------------------------------------------------------------------
+
+const PASSWORD: &str = "correct-horse-battery-staple";
+
+/// Builds an app whose login handler is backed by an in-memory user store
+/// seeded with one enabled admin (`alice@example.com`) and one disabled user
+/// (`bob@example.com`), both with the same known password.
+fn login_app() -> axum::Router {
+    let tmp = tempdir();
+    let storage = Arc::new(LocalDriver::new(tmp, "/i"));
+    let audit = Arc::new(NoopAuditSink);
+    let hash = picroom_auth::PasswordHasher::new()
+        .hash(PASSWORD)
+        .expect("hash");
+    let mut users = HashMap::new();
+    users.insert(
+        "alice@example.com".to_string(),
+        UserCredentials {
+            id: picroom_domain::UserId(uuid::Uuid::now_v7()),
+            role: "admin".to_string(),
+            password_hash: hash.clone(),
+            disabled: false,
+        },
+    );
+    users.insert(
+        "bob@example.com".to_string(),
+        UserCredentials {
+            id: picroom_domain::UserId(uuid::Uuid::now_v7()),
+            role: "viewer".to_string(),
+            password_hash: hash,
+            disabled: true,
+        },
+    );
+    let repo: Arc<dyn UserRepository> = Arc::new(InMemoryUserRepo { users });
+    let state = Arc::new(AppState::for_dev(storage, audit).with_user_repo(repo));
+    picroom_api::build_router(state)
+}
+
+async fn post_login(app: axum::Router, email: &str, password: &str) -> (StatusCode, Value) {
+    use axum::http::header::CONTENT_TYPE;
+    let body = serde_json::json!({ "email": email, "password": password }).to_string();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, json)
+}
+
+#[tokio::test]
+async fn login_with_correct_password_returns_token() {
+    let (status, json) = post_login(login_app(), "alice@example.com", PASSWORD).await;
+    assert_eq!(status, StatusCode::OK, "got {status}, body: {json}");
+    let token = json["access_token"].as_str().expect("access_token");
+    assert!(!token.is_empty());
+
+    // The token must verify against the dev JWT service and carry the role.
+    let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
+    let claims = jwt.verify(token).expect("issued token must verify");
+    // sub must be a UUID (the user id), not the email.
+    uuid::Uuid::parse_str(&claims.sub).expect("sub is a uuid");
+    assert_eq!(claims.scopes, vec!["admin".to_string()]);
+}
+
+#[tokio::test]
+async fn login_with_wrong_password_returns_401() {
+    let (status, json) = post_login(login_app(), "alice@example.com", "wrong-password").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(json["code"], "unauthorized");
+}
+
+#[tokio::test]
+async fn login_with_unknown_email_returns_401() {
+    let (status, _json) = post_login(login_app(), "nobody@example.com", PASSWORD).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn login_with_disabled_account_returns_401() {
+    let (status, _json) = post_login(login_app(), "bob@example.com", PASSWORD).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------------
+// Auth gate — middleware must verify tokens, not just check presence
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn api_rejects_missing_token() {
+    let app = build_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/images")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_rejects_forged_token() {
+    // `Bearer garbage` must be rejected now (previously it passed).
+    let app = build_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/images")
+                .header("authorization", "Bearer garbage.not.a.real.token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_rejects_token_signed_with_wrong_secret() {
+    let app = build_app();
+    // Signed with a different secret than the dev service ("dev-secret").
+    let jwt = picroom_auth::JwtService::new("wrong-secret", "picroom", "picroom-api", 3600);
+    let token = jwt
+        .issue_with_scopes(uuid::Uuid::now_v7(), &["admin".to_string()])
+        .unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/images")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

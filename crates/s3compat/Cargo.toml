@@ -26,6 +26,7 @@ bytes = { workspace = true }
 quick-xml = { workspace = true }
 hmac = "0.12"
 sha2 = { workspace = true }
+subtle = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }

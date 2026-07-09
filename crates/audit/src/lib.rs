@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Audit
 //!
 //! Append-only audit log: events + sinks.

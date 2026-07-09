@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Integration tests for the S3 driver against a wiremock server.
 
 use bytes::Bytes;

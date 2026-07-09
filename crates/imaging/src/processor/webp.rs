@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! WebP encoder.
 
 use super::{Processor, ProcessorError, ProcessorOutput};

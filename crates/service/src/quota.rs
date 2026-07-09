@@ -1,9 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Quota service.
+//!
+//! ⚠️ **DEFERRED STUB.** This service currently reports unlimited quota
+//! (`remaining_user` → `u64::MAX`, `charge_user` → `Ok(())`) and performs no
+//! enforcement. Per-user/per-team byte caps are not checked before uploads.
+//! This is an accepted v0.1 limitation — see `docs/review-2026-07.md` §3.3.
+//! A real implementation requires a `quotas` table and pre-upload checks in
+//! `UploadService`.
 
 use crate::ServiceError;
 use uuid::Uuid;
 
-/// Quota service (skeleton).
+/// Quota service (deferred stub — see module docs).
 #[derive(Debug, Clone)]
 pub struct QuotaService;
 

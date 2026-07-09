@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Storage
 //!
 //! Storage abstraction layer with trait-based drivers for multiple backends.

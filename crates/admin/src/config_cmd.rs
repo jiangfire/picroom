@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Config validate + print subcommands.
 
 use picroom_infra::{load_config, Config};

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Integration tests for the admin CLI against an in-memory `SQLite`
 //! database with the production schema (subset).
 

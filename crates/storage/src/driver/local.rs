@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Local filesystem driver.
 //!
 //! Stores objects under a configurable root directory. Each object is

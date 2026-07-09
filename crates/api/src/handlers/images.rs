@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Image handlers.
 
 use crate::error::ApiError;
@@ -5,7 +8,6 @@ use crate::extractors::auth::AuthUser;
 use crate::state::AppState;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use bytes::Bytes;
 use picroom_auth::Role;
 use picroom_domain::ImageId;
@@ -16,8 +18,10 @@ use uuid::Uuid;
 /// `POST /api/v1/images` — multipart upload.
 ///
 /// Accepts a `file` field (binary) and an optional `team_id` form field.
+/// The image is attributed to the authenticated user.
 pub async fn upload(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     mut multipart: Multipart,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     let mut file_bytes: Option<Bytes> = None;
@@ -59,9 +63,8 @@ pub async fn upload(
     let bytes = file_bytes.ok_or_else(|| ApiError::bad_request("missing 'file' field"))?;
     let mime = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
 
-    // For skeleton: trust the caller-supplied user_id via header (real impl: JWT).
-    // Production wires this through the AuthUser extractor.
-    let actor = state.dev_user;
+    // Attribute the upload to the authenticated principal (never the dev user).
+    let actor = auth.user_id;
 
     let image = match state.upload.upload(actor, &mime, bytes).await {
         Ok(i) => i,
@@ -99,8 +102,12 @@ pub async fn upload(
 }
 
 /// `GET /api/v1/images` — paginated list.
+///
+/// Non-admins can only see their own images. Admins may pass an `owner`
+/// query parameter to list another user's images.
 pub async fn list(
     State(state): State<Arc<AppState>>,
+    auth: AuthUser,
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     let Some(repo) = &state.image_repo else {
@@ -111,7 +118,11 @@ pub async fn list(
         limit: params.limit.unwrap_or(50).clamp(1, 200),
         cursor: None,
     };
-    let owner = params.owner.unwrap_or(state.dev_user.as_uuid());
+    // Default to the caller; admins may override to view another owner.
+    let owner = match params.owner {
+        Some(owner) if auth.roles.contains(&Role::Admin) => owner,
+        _ => auth.user_id.as_uuid(),
+    };
     let images = repo
         .list_for_owner(owner, page)
         .await
@@ -154,17 +165,15 @@ pub struct ListParams {
 pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    auth: Option<AuthUser>,
+    auth: AuthUser,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     let Some(repo) = &state.image_repo else {
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
     // IDOR check: only owner or admin can view.
-    if let Some(user) = auth {
-        if user.user_id != image.owner_id && !user.roles.contains(&Role::Admin) {
-            return Err(ApiError::forbidden("not allowed"));
-        }
+    if auth.user_id != image.owner_id && !auth.roles.contains(&Role::Admin) {
+        return Err(ApiError::forbidden("not allowed"));
     }
     Ok(axum::Json(json!({
         "id": image.id.to_string(),
@@ -181,17 +190,15 @@ pub async fn get(
 pub async fn delete(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    auth: Option<AuthUser>,
+    auth: AuthUser,
 ) -> Result<StatusCode, ApiError> {
     let Some(repo) = &state.image_repo else {
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
     // IDOR check: only owner or admin can delete.
-    if let Some(user) = auth {
-        if user.user_id != image.owner_id && !user.roles.contains(&Role::Admin) {
-            return Err(ApiError::forbidden("not allowed"));
-        }
+    if auth.user_id != image.owner_id && !auth.roles.contains(&Role::Admin) {
+        return Err(ApiError::forbidden("not allowed"));
     }
     // Delete from storage (best-effort).
     if let Err(e) = state.storage.delete(&image.key).await {
@@ -199,14 +206,4 @@ pub async fn delete(
     }
     repo.delete(ImageId(id)).await.map_err(ApiError::from)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// `_bytes` no-op helper to silence unused-import warnings in tests.
-pub const fn _bytes_() -> Bytes {
-    Bytes::new()
-}
-
-/// `_into_response` no-op helper for tests.
-pub fn _into_response() -> impl IntoResponse {
-    StatusCode::OK
 }

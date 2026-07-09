@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! # Picroom Infra
 //!
 //! Infrastructure layer: configuration loading, DB pools, logging,
@@ -15,8 +18,8 @@ pub mod telemetry;
 
 pub use cache::Cache;
 pub use clock::SystemClock;
-pub use config::{load_config, load_config_from, Config};
+pub use config::{load_config, load_config_from, require_strong_jwt_secret, Config};
 pub use db::{Database, DbError};
 pub use id::IdGenerator;
 pub use logging::init_logging;
-pub use telemetry::init_metrics;
+pub use telemetry::{init_metrics, render_metrics};

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Application wiring — constructs all runtime dependencies from `Config`.
 //!
 //! This module replaces the former `AppState::for_dev()` hardcoded path
@@ -10,7 +13,7 @@
 
 use anyhow::Result;
 use picroom_audit::AuditSink;
-use picroom_service::repo::{ImageRepository, PgImageRepository};
+use picroom_service::repo::{ImageRepository, PgImageRepository, PgUserRepository, UserRepository};
 use picroom_storage::driver::{LocalDriver, S3Driver};
 use picroom_storage::Storage;
 use std::sync::Arc;
@@ -23,6 +26,8 @@ pub struct AppDeps {
     pub audit: Arc<dyn AuditSink>,
     /// The image repository (None if DB unavailable).
     pub image_repo: Option<Arc<dyn ImageRepository>>,
+    /// The user repository (None if DB unavailable).
+    pub user_repo: Option<Arc<dyn UserRepository>>,
     /// The DB pool (for job queue, admin CLI, etc.).
     pub db: Option<DatabaseHandle>,
 }
@@ -54,8 +59,9 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
         Option<DatabaseHandle>,
         Arc<dyn AuditSink>,
         Option<Arc<dyn ImageRepository>>,
+        Option<Arc<dyn UserRepository>>,
     );
-    let (db, audit, image_repo): BuiltDeps = if url.starts_with("postgres://")
+    let (db, audit, image_repo, user_repo): BuiltDeps = if url.starts_with("postgres://")
         || url.starts_with("postgresql://")
     {
         match sqlx::postgres::PgPoolOptions::new()
@@ -68,11 +74,17 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
                 let audit: Arc<dyn AuditSink> =
                     Arc::new(picroom_audit::DbAuditSink::new(pool.clone()));
                 let repo: Arc<dyn ImageRepository> = Arc::new(PgImageRepository::new(pool.clone()));
-                (Some(DatabaseHandle::Pg(pool)), audit, Some(repo))
+                let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
+                (
+                    Some(DatabaseHandle::Pg(pool)),
+                    audit,
+                    Some(repo),
+                    Some(users),
+                )
             }
             Err(e) => {
                 tracing::warn!("database connection failed, degrading: {e}");
-                (None, Arc::new(picroom_audit::NoopAuditSink), None)
+                (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
             }
         }
     } else if url.starts_with("sqlite://") {
@@ -85,16 +97,17 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
                     Some(DatabaseHandle::Sqlite(pool)),
                     Arc::new(picroom_audit::NoopAuditSink),
                     None,
+                    None,
                 )
             }
             Err(e) => {
                 tracing::warn!("SQLite connection failed, degrading: {e}");
-                (None, Arc::new(picroom_audit::NoopAuditSink), None)
+                (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
             }
         }
     } else {
         tracing::warn!("unsupported database URL scheme, running without DB");
-        (None, Arc::new(picroom_audit::NoopAuditSink), None)
+        (None, Arc::new(picroom_audit::NoopAuditSink), None, None)
     };
 
     // --- Storage ---
@@ -104,6 +117,7 @@ pub async fn build_deps(cfg: &picroom_infra::Config) -> Result<AppDeps> {
         storage,
         audit,
         image_repo,
+        user_repo,
         db,
     })
 }

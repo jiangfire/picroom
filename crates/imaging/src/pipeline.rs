@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! Image processing pipeline.
 
 use super::processor::{Processor, ProcessorError, ProcessorOutput};

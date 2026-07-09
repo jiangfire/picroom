@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! `picroom worker` subcommand.
 
 use crate::app::{build_deps, DatabaseHandle};
@@ -86,6 +89,9 @@ pub async fn run(config: Option<PathBuf>, concurrency: usize) -> anyhow::Result<
     let cfg = picroom_infra::load_config_from(config.as_deref())?;
     picroom_infra::init_logging(&cfg.logging.level, &cfg.logging.format);
     picroom_infra::init_metrics();
+    // Security: workers also issue/accept JWT-adjacent state; refuse the
+    // default secret in release builds (mirrors the API binary).
+    picroom_infra::require_strong_jwt_secret(&cfg).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     tracing::info!("picroom worker starting (concurrency={concurrency})");
 

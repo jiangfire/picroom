@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
 //! S3 `ListObjectsV2` handler.
 
 use crate::S3State;
