@@ -8,7 +8,7 @@
 
 use crate::ServiceError;
 use async_trait::async_trait;
-use picroom_domain::{Image, ImageId, Page, PageReq, Team, TeamId, UserId};
+use picroom_domain::{Image, ImageId, NewUser, Page, PageReq, Team, TeamId, User, UserId};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -101,28 +101,75 @@ impl ImageRepository for PgImageRepository {
         page: PageReq,
     ) -> Result<Page<Image>, ServiceError> {
         let limit = i64::from(page.limit.clamp(1, 200));
+        // Decode the composite cursor (`created_at|id`) if supplied.
+        let (cursor_ts, cursor_id): (Option<OffsetDateTime>, Option<Uuid>) = match &page.cursor {
+            Some(c) => {
+                let parts: Vec<&str> = c.splitn(2, '|').collect();
+                if parts.len() == 2 {
+                    let ts = OffsetDateTime::parse(
+                        parts[0],
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .map_err(|e| ServiceError::Internal(format!("invalid cursor: {e}")))?;
+                    let id = Uuid::parse_str(parts[1])
+                        .map_err(|e| ServiceError::Internal(format!("invalid cursor id: {e}")))?;
+                    (Some(ts), Some(id))
+                } else {
+                    (None, None)
+                }
+            }
+            None => (None, None),
+        };
+        // Fetch one extra row so we can tell whether another page follows.
         let rows: Vec<ImageRow> = sqlx::query_as::<_, ImageRow>(
             r"
             SELECT id, owner_id, team_id, storage_policy, storage_key, content_type,
                    bytes, width, height, sha256, status, created_at
             FROM images
             WHERE owner_id = $1 AND status != 'deleted'
-            ORDER BY created_at DESC
-            LIMIT $2
+              AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3::uuid))
+            ORDER BY created_at DESC, id DESC
+            LIMIT $3
             ",
         )
         .bind(owner_id)
-        .bind(limit)
+        .bind(cursor_ts)
+        .bind(cursor_id)
+        .bind(limit + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("list images: {e}")))?;
 
-        let images: Vec<Image> = rows
-            .into_iter()
+        let has_more = rows.len() as i64 > limit;
+        let page_rows: &[ImageRow] = if has_more {
+            &rows[..limit as usize]
+        } else {
+            &rows[..]
+        };
+        let images: Vec<Image> = page_rows
+            .iter()
+            .cloned()
             .map(std::convert::TryInto::try_into)
             .collect::<Result<_, _>>()?;
-
-        Ok(Page::new(images, None, page))
+        // Cursor for the next page encodes the last row's `(created_at, id)`
+        // so pagination is stable even when many rows share a timestamp.
+        let next_cursor = if has_more {
+            page_rows
+                .last()
+                .map(|r| {
+                    Ok::<String, ServiceError>(format!(
+                        "{}|{}",
+                        r.created_at
+                            .format(&time::format_description::well_known::Rfc3339)
+                            .map_err(|e| ServiceError::Internal(format!("format cursor: {e}")))?,
+                        r.id
+                    ))
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(Page::new(images, next_cursor, page))
     }
 
     async fn delete(&self, id: ImageId) -> Result<(), ServiceError> {
@@ -218,6 +265,10 @@ pub struct UserCredentials {
 pub trait UserRepository: Send + Sync {
     /// Looks up credentials by email. `Ok(None)` means "no such user".
     async fn find_by_email(&self, email: &str) -> Result<Option<UserCredentials>, ServiceError>;
+    /// Creates a user from the given request.
+    async fn create_user(&self, new: &NewUser) -> Result<User, ServiceError>;
+    /// Updates a user's role.
+    async fn set_role(&self, user_id: UserId, role: &str) -> Result<(), ServiceError>;
 }
 
 /// PostgreSQL-backed user repository.
@@ -250,6 +301,42 @@ impl UserRepository for PgUserRepository {
                 disabled,
             }),
         )
+    }
+
+    async fn create_user(&self, new: &NewUser) -> Result<User, ServiceError> {
+        let id = Uuid::now_v7();
+        let row: (Uuid, String, String, bool, OffsetDateTime) = sqlx::query_as(
+            r"INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+              RETURNING id, email, name, disabled, created_at",
+        )
+        .bind(id)
+        .bind(&new.email)
+        .bind(&new.name)
+        .bind(&new.password_hash)
+        .bind(&new.role)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("create user: {e}")))?;
+        Ok(User {
+            id: UserId(row.0),
+            email: row.1,
+            name: row.2,
+            avatar_url: None,
+            role: new.role.clone(),
+            created_at: row.4,
+            disabled: row.3,
+        })
+    }
+
+    async fn set_role(&self, user_id: UserId, role: &str) -> Result<(), ServiceError> {
+        sqlx::query(r"UPDATE users SET role = $2, updated_at = NOW() WHERE id = $1")
+            .bind(user_id.as_uuid())
+            .bind(role)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("set role: {e}")))?;
+        Ok(())
     }
 }
 

@@ -28,13 +28,19 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
     // Build all dependencies from config.
     let deps = build_deps(&cfg).await?;
 
-    // Construct UploadService with real audit + optional job queue.
-    let storage_writer: Arc<dyn StorageWriter + Send + Sync> = {
-        // We wrap storage in a StorageWriter adapter (Arc<S> → StorageWriter).
-        // Since Storage super-impls StorageWriter, we use the adapter from state.rs.
-        Arc::new(picroom_api::StorageWriterFromArc(deps.storage.clone()))
+    let storage_writer: Arc<dyn StorageWriter + Send + Sync> =
+        { Arc::new(picroom_api::StorageWriterFromArc(deps.storage.clone())) };
+
+    // Per-user quota enforcement — backed by PostgreSQL; unlimited on SQLite.
+    let quota = match &deps.db {
+        Some(DatabaseHandle::Pg(pool)) => picroom_service::QuotaService::with_pool(pool.clone()),
+        _ => picroom_service::QuotaService::new(),
     };
-    let mut upload = picroom_service::UploadService::new(storage_writer, deps.audit.clone());
+
+    // Construct UploadService with real audit + quota.
+    let mut upload =
+        picroom_service::UploadService::new(storage_writer.clone(), deps.audit.clone())
+            .with_quota(quota);
 
     // Optionally wire job queue.
     if let Some(db) = &deps.db {
@@ -63,6 +69,15 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         cfg.auth.jwt_audience.clone(),
         cfg.auth.jwt_ttl_secs,
     ));
+    // Unified delete service: routes DELETE through storage + repo + audit.
+    let delete_service = deps.image_repo.as_ref().map(|repo| {
+        Arc::new(picroom_service::DeleteService::new(
+            storage_writer.clone(),
+            repo.clone(),
+            deps.audit.clone(),
+        ))
+    });
+
     let state = Arc::new(AppState {
         upload: Arc::new(upload),
         image_repo: deps.image_repo.clone(),
@@ -73,6 +88,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         permissions: Arc::new(picroom_service::PermissionService::new()),
         team_repo: deps.team_repo.clone(),
         audit_reader: deps.audit_reader.clone(),
+        delete_service,
         // S3 SigV4 enforcement is opt-in: set PICROOM_S3_ACCESS_KEY_ID +
         // PICROOM_S3_SECRET_ACCESS_KEY to require signed S3 requests.
         s3_credentials: read_s3_credentials(),

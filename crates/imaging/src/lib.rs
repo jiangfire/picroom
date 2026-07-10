@@ -14,12 +14,11 @@
 //! - Thumbnail generation
 //! - Watermark
 //!
-//! A `Pipeline` runs processors sequentially with shared context.
+//! Processors run sequentially, each receiving a shared `PipelineContext`.
 
 #![allow(missing_docs)]
 
-pub mod pipeline;
 pub mod processor;
 
-pub use pipeline::{Pipeline, PipelineContext};
+pub use processor::PipelineContext;
 pub use processor::{ProbeProcessor, Processor, ProcessorOutput};

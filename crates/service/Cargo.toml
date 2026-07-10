@@ -25,7 +25,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-time = { workspace = true }
+time = { workspace = true, features = ["formatting", "parsing"] }
 uuid = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

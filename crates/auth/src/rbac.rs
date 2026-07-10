@@ -121,6 +121,32 @@ impl Role {
     }
 }
 
+impl std::str::FromStr for Role {
+    type Err = RoleParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "viewer" => Ok(Self::Viewer),
+            "uploader" => Ok(Self::Uploader),
+            "manager" => Ok(Self::Manager),
+            "admin" => Ok(Self::Admin),
+            _ => Err(RoleParseError(s.to_string())),
+        }
+    }
+}
+
+/// Error returned when a role string cannot be parsed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleParseError(pub String);
+
+impl std::fmt::Display for RoleParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown role: {}", self.0)
+    }
+}
+
+impl std::error::Error for RoleParseError {}
+
 /// Resource being acted upon (with explicit ACL overrides).
 #[derive(Debug, Clone)]
 pub struct Resource {

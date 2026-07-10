@@ -46,4 +46,4 @@ pub use permission::{Permission, PermissionAction, ResourceType};
 pub use role::{Role, RolePermissions};
 pub use storage_key::StorageKey;
 pub use team::{Team, TeamId, TeamMember};
-pub use user::{User, UserId};
+pub use user::{NewUser, User, UserId};

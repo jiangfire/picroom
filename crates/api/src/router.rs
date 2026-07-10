@@ -5,7 +5,7 @@
 
 use crate::state::AppState;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 use std::sync::Arc;
 
@@ -38,6 +38,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/admin/users",
             post(super::handlers::admin::create_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/role",
+            patch(super::handlers::admin::set_role),
         )
         .route("/api/v1/audit", get(super::handlers::admin::audit))
         // S3-compat (open — SigV4 verified per-request)

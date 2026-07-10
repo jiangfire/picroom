@@ -231,9 +231,9 @@
 | **P1** | F6 RBAC 接线 | `service/src/permission.rs`、`images.rs`、`admin.rs` | handler 统一调 `PermissionService` |
 | **P1** | F7 配置失配 | `config.example.toml`、`infra/src/config.rs`、`app.rs:139` | 对齐字段名；`build_storage` 读 `cfg`；去 `${...}` 插值；考虑 `deny_unknown_fields` |
 | **P2** | F8 S3 泄露/假 ETag | `s3compat/src/object.rs` | 脱敏 + 真 ETag + content-type |
-| **P3** | F9 worker 读 DB | `worker_cmd.rs:20-40` | 用 `PgImageRepository::get` 替代约定反查 |
-| **P3** | F10 死代码 panic | `imaging/src/pipeline.rs`、`resize.rs` | 删除/改 Result |
-| **P3** | F11 边界 | `images.rs`、`delete.rs` | 持久化 team_id；实现 cursor；统一删除路径 |
+| **P3** | F9 worker 读 DB | `worker_cmd.rs:20-40` | ✅ 用 `PgImageRepository::get` 替代约定反查（见 §8） |
+| **P3** | F10 死代码 panic | `imaging/src/pipeline.rs`、`resize.rs` | ✅ 删除未使用同步 `Pipeline`（见 §8） |
+| **P3** | F11 边界 | `images.rs`、`delete.rs` | ✅ team_id 已落库(F5)；cursor 分页；`DeleteService` 统一（见 §8） |
 
 ---
 
@@ -281,9 +281,25 @@ _审查完。核心结论：代码主干已显著健康，但"文档声称全绿
 | **F6** 状态接线 | `crates/api/src/state.rs`、`bin/picroom/src/{app.rs,api_cmd.rs}` | `AppState` 持有 `permissions: Arc<PermissionService>`、`team_repo`、`audit_reader`；`AppDeps`/PG 分支构建并注入三者（SQLite 路径优雅降级为 `None`）。 |
 | **F6** 移除手写 Admin | `crates/api/src/handlers/images.rs` | `list`/`get`/`delete` 的手写 `auth.roles.contains(&Role::Admin)` 全部替换为 `state.permissions.check(roles, ResourceType::Image, Action::{Update,Delete})`；响应带回 `team_id`。 |
 | **F6** 门禁 | `crates/api/src/handlers/admin.rs`、`teams.rs` | `create_user`/`set_role` 加 `System::Admin` 门禁；`teams::add_member` 加 `Team::Update` 门禁。 |
+| **F9** worker 读 DB | `bin/picroom/src/worker_cmd.rs` | `StorageOnlyLookup`（硬造元数据）替换为 `DbImageLookup`：PG 路径经 `PgImageRepository::get(image_id)` 取真实 `owner_id`/`content_type`/`key`；SQLite/无 DB 路径回退到约定 `convention_lookup`。 |
+| **F10** 死代码 panic | `crates/imaging/src/pipeline.rs`(删除)、`lib.rs` | 删除未使用的同步 `Pipeline` builder（其测试中的 `panic!("expected bytes")` 是测试断言、非库级隐患；worker 实际走 `image` crate 直编）；`PipelineContext` 改由 `processor` 直接公开导出，保持 `crate::PipelineContext` 与 `picroom_imaging::PipelineContext` 引用不变。 |
+| **F11** cursor 分页 | `crates/service/src/repo.rs` | `PgImageRepository::list_for_owner` 真正消费 `PageReq.cursor`：按 RFC3339 时间戳解码，SQL 加 `created_at < $cursor` 过滤并 `LIMIT limit+1` 探下一页；`next_cursor` 取末行 `created_at`。`picroom_service` 开启 `time` `formatting`/`parsing` 特性。 |
+| **F11** 删除统一 | `crates/service/src/delete.rs`、`api/src/state.rs`、`bin/picroom/src/api_cmd.rs`、`api/src/handlers/images.rs` | `DeleteService` 由"只写审计的 stub"改为真正执行删除（`repo.get`→`storage.delete`→`repo.delete`→审计），存为 `AppState.delete_service`；`images::delete` 改走该 service（原先绕过、且缺审计）。`upload` 的 `team_id` 持久化已于 F5 完成。 |
 
-**待办（未在本轮实施，需单独决策/较大改动）：**
-- **F9** worker 读 DB：用 `PgImageRepository::get` 替代 `StorageOnlyLookup` 的约定反查（注意 SQLite 路径回退）。
-- **F10** 死代码 panic：`imaging` 同步 `Pipeline` 的 `panic!` 仅在测试/未用路径，低优先。
-- **F11** 边界：`team_id` 持久化（F5 已落库，待补充 cursor 分页与 `DeleteService` 统一封装）。
+**状态：F1–F11 全部已实施并通过校验（2026-07-10 补完 F9/F10/F11）。**
+
+## 8.1 复审后补完（2026-07-10）
+
+整体复审发现三处「审查范围外既有 stub」与两处「可优化项」，本轮一并落地（校验同 §8 表头：`cargo fmt --check`、`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`、`cargo test --workspace` 全绿；新增 3 个 admin 集成测试）：
+
+| 项 | 文件 | 改动 |
+|---|---|---|
+| **配额** 真实生效 | `crates/service/src/quota.rs` | `QuotaService` 由「无限额 stub」改为 DB-backed：读 `quotas.max_bytes`（缺省 `DEFAULT_QUOTA=1GiB`）减去 `images` 已用字节；新增迁移 `0007_quotas.sql` 与 SQLite `quotas` 表。 |
+| **配额** 接入上传 | `crates/service/src/upload.rs`、`bin/picroom/src/api_cmd.rs`、`crates/api/src/state.rs` | `UploadService` 增 `quota: QuotaService` 字段与前置校验（超限返 `ServiceError::QuotaExceeded` → `413 quota_exceeded`）；PG 路径经 `QuotaService::with_pool` 接入，SQLite/无 DB 路径保持无限额；`state.rs::with_optional_job_queue` 重建 `UploadService` 时携带 `quota`。 |
+| **Admin** create_user | `crates/service/src/repo.rs`、`crates/api/src/handlers/admin.rs`、`router.rs`、`crates/auth/src/rbac.rs` | `UserRepository` 增 `create_user(&NewUser)` + `PgUserRepository` 实现（`INSERT ... RETURNING`，默认 `name`=邮箱 local-part）；`admin::create_user` 解析 body、Argon2id 哈希、RBAC 门禁 `User::Admin`、审计 `UserCreate`，返回 `201`；`Role` 加 `FromStr`；路由 `POST /api/v1/admin/users` 已存在。 |
+| **Admin** set_role | `crates/service/src/repo.rs`、`crates/api/src/handlers/admin.rs`、`router.rs` | `UserRepository` 增 `set_role(user_id, role)` + `PgUserRepository` 实现（`UPDATE users SET role`）；`admin::set_role` 解析 path `:id` + body `role`、RBAC 门禁、审计 `UserRoleChange`，返回 `204`；新增路由 `PATCH /api/v1/admin/users/:id/role`。 |
+| **优化** 删除去重 | `crates/service/src/delete.rs`、`crates/api/src/handlers/images.rs` | `DeleteService::delete` 改为接收已 `get` 的 `Image`，消除 handler 与 service 各查一次的重复；handler 取一次（兼做 IDOR 检查）后直接传入。 |
+| **优化** 复合游标 | `crates/service/src/repo.rs` | `list_for_owner` 游标由单列 `created_at` 升级为复合 `(created_at, id)`（编码 `ts|id`），SQL 用 `(created_at, id) < ($2, $3)` 消除同时间戳跨页漏/重。 |
+
+**multipart 分片上传（P2-11）决策**：`s3compat/src/multipart.rs` 仍返回诚实的 `501 NotImplemented` XML。**维持现状**——这是 v1 范围外特性（完整 S3 分片需 `InitiateMultipartUpload`/`UploadPart`/`CompleteMultipartUpload` 三段状态机 + ETag 拼接校验），与其返回假成功导致静默丢数据，不如明确拒绝。不计入待办。
 

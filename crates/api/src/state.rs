@@ -9,7 +9,9 @@ use picroom_audit::{AuditReader, AuditSink};
 use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
 use picroom_service::repo::{ImageRepository, TeamRepository, UserRepository};
+use picroom_service::DeleteService;
 use picroom_service::PermissionService;
+use picroom_service::QuotaService;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
@@ -43,6 +45,8 @@ pub struct AppState {
     pub team_repo: Option<Arc<dyn TeamRepository>>,
     /// Audit log reader (None when running without a DB).
     pub audit_reader: Option<Arc<dyn AuditReader>>,
+    /// Unified delete service (None when running without a DB).
+    pub delete_service: Option<Arc<DeleteService>>,
     /// Optional S3 client credential; when set, the S3 endpoint enforces `SigV4`.
     pub s3_credentials: Option<picroom_s3compat::S3Credential>,
 }
@@ -69,7 +73,8 @@ impl AppState {
         let storage_arc: Arc<dyn StorageWriter + Send + Sync> =
             Arc::new(StorageWriterFromArc(storage.clone()));
         let audit_arc: Arc<dyn AuditSink + Send + Sync> = Arc::new(AuditSinkFromArc(audit.clone()));
-        let upload = Arc::new(UploadService::new(storage_arc, audit_arc));
+        let upload =
+            Arc::new(UploadService::new(storage_arc, audit_arc).with_quota(QuotaService::new()));
         Self {
             upload,
             image_repo: None,
@@ -85,6 +90,7 @@ impl AppState {
             permissions: Arc::new(PermissionService::new()),
             team_repo: None,
             audit_reader: None,
+            delete_service: None,
             s3_credentials: None,
         }
     }
@@ -112,6 +118,7 @@ impl AppState {
                 thumbnail_sizes: self.upload.thumbnail_sizes.clone(),
                 enable_avif: self.upload.enable_avif,
                 enable_webp: self.upload.enable_webp,
+                quota: self.upload.quota.clone(),
             });
         }
         self

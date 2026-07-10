@@ -6,7 +6,8 @@
 use crate::app::{build_deps, DatabaseHandle};
 use async_trait::async_trait;
 use bytes::Bytes;
-use picroom_domain::{Image, ImageId, StorageKey};
+use picroom_domain::{Image, ImageId, StorageKey, UserId};
+use picroom_service::{ImageRepository, PgImageRepository};
 use picroom_worker::processor::ImageLookup;
 use picroom_worker::{Job, JobError, JobQueue, JobResult};
 use picroom_worker::{ProcessorDeps, RetryPolicy, WorkerPool};
@@ -16,28 +17,44 @@ use std::time::Duration;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Image lookup using convention key.
-struct StorageOnlyLookup;
+/// Image lookup backed by the image repository (Postgres), with a
+/// convention-based fallback for environments without a DB repo (SQLite-only
+/// or test runs).
+struct DbImageLookup {
+    repo: Option<Arc<dyn ImageRepository>>,
+}
 
 #[async_trait]
-impl ImageLookup for StorageOnlyLookup {
+impl ImageLookup for DbImageLookup {
     async fn lookup(&self, id: ImageId) -> Result<Image, String> {
-        let key = StorageKey::parse(&format!("img/{}.bin", id.as_uuid()))
-            .map_err(|e| format!("key: {e}"))?;
-        Ok(Image {
-            id,
-            owner_id: picroom_domain::UserId(uuid::Uuid::nil()),
-            team_id: None,
-            key,
-            content_type: "image/png".into(),
-            bytes: 0,
-            width: 0,
-            height: 0,
-            sha256: None,
-            variants: vec![],
-            created_at: time::OffsetDateTime::now_utc(),
-        })
+        match &self.repo {
+            Some(repo) => repo
+                .get(id)
+                .await
+                .map_err(|e| format!("db lookup {id}: {e}")),
+            None => convention_lookup(id),
+        }
     }
+}
+
+/// Fallback used only when no DB repository is configured. Synthesizes
+/// metadata purely from the storage key convention `img/{id}.bin`.
+fn convention_lookup(id: ImageId) -> Result<Image, String> {
+    let key =
+        StorageKey::parse(&format!("img/{}.bin", id.as_uuid())).map_err(|e| format!("key: {e}"))?;
+    Ok(Image {
+        id,
+        owner_id: UserId(uuid::Uuid::nil()),
+        team_id: None,
+        key,
+        content_type: "image/png".into(),
+        bytes: 0,
+        width: 0,
+        height: 0,
+        sha256: None,
+        variants: vec![],
+        created_at: time::OffsetDateTime::now_utc(),
+    })
 }
 
 /// In-memory DLQ.
@@ -123,7 +140,14 @@ pub async fn run(config: Option<PathBuf>, concurrency: usize) -> anyhow::Result<
             _ => None,
         };
 
-    let lookup: Arc<dyn ImageLookup + Send + Sync> = Arc::new(StorageOnlyLookup);
+    // Image metadata lookup: prefer the DB repository (real owner_id /
+    // content_type / storage key), falling back to the key convention when no
+    // repo is available (SQLite-only or test environments).
+    let image_repo: Option<Arc<dyn ImageRepository>> = match &deps.db {
+        Some(DatabaseHandle::Pg(pool)) => Some(Arc::new(PgImageRepository::new(pool.clone()))),
+        _ => None,
+    };
+    let lookup: Arc<dyn ImageLookup + Send + Sync> = Arc::new(DbImageLookup { repo: image_repo });
 
     let deps_arc = Arc::new(ProcessorDeps {
         image_lookup: lookup,

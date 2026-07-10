@@ -119,7 +119,7 @@ pub async fn list(
     use picroom_domain::PageReq;
     let page = PageReq {
         limit: params.limit.unwrap_or(50).clamp(1, 200),
-        cursor: None,
+        cursor: params.cursor.clone(),
     };
     // Default to the caller; users who may manage images (manager/admin via
     // RBAC) may override to view another owner.
@@ -222,10 +222,16 @@ pub async fn delete(
     {
         return Err(ApiError::forbidden("not allowed"));
     }
-    // Delete from storage (best-effort).
-    if let Err(e) = state.storage.delete(&image.key).await {
-        tracing::warn!("storage delete failed: {e}");
+    // Route deletion through the unified DeleteService (storage + DB + audit).
+    // The already-fetched `image` is passed in so we don't look it up twice.
+    match &state.delete_service {
+        Some(svc) => svc.delete(image).await.map_err(ApiError::from)?,
+        None => {
+            // Defensive fallback for environments without a DB-backed service.
+            if let Err(e) = state.storage.delete(&image.key).await {
+                tracing::warn!("storage delete failed: {e}");
+            }
+        }
     }
-    repo.delete(ImageId(id)).await.map_err(ApiError::from)?;
     Ok(StatusCode::NO_CONTENT)
 }

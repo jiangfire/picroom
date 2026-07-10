@@ -9,6 +9,7 @@
 //! persistence of the metadata row is the caller's responsibility
 //! (see `repo::ImageRepository`).
 
+use crate::QuotaService;
 use crate::ServiceError;
 use bytes::Bytes;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
@@ -46,6 +47,8 @@ pub struct UploadService {
     pub enable_avif: bool,
     /// Whether to enqueue a WebP job.
     pub enable_webp: bool,
+    /// Quota service used to enforce per-user byte caps.
+    pub quota: QuotaService,
 }
 
 impl UploadService {
@@ -63,6 +66,7 @@ impl UploadService {
             thumbnail_sizes: DEFAULT_THUMBNAIL_SIZES.to_vec(),
             enable_avif: true,
             enable_webp: true,
+            quota: QuotaService::new(),
         }
     }
 
@@ -102,6 +106,12 @@ impl UploadService {
         self
     }
 
+    /// Sets the quota service used to enforce per-user byte caps.
+    pub fn with_quota(mut self, q: QuotaService) -> Self {
+        self.quota = q;
+        self
+    }
+
     /// Returns the underlying storage handle.
     pub fn storage(&self) -> &Arc<dyn StorageWriter + Send + Sync> {
         &self.storage
@@ -125,6 +135,14 @@ impl UploadService {
                 self.max_bytes
             ))
             .into());
+        }
+
+        // 1.5 Quota check — reject before we touch storage so we never persist
+        // bytes we would have to roll back. `remaining_user` returns the
+        // user's cap minus already-stored bytes (or `u64::MAX` when unbacked).
+        let remaining = self.quota.remaining_user(owner_id.as_uuid()).await?;
+        if (bytes.len() as u64) > remaining {
+            return Err(ServiceError::QuotaExceeded(bytes.len() as u64, remaining));
         }
 
         // 2. MIME check

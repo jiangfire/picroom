@@ -3,48 +3,68 @@
 
 //! Delete use case.
 //!
-//! ⚠️ **DEFERRED STUB.** `DeleteService::delete` currently only emits an audit
-//! event; it does **not** remove the storage object or the DB row. The live
-//! HTTP `DELETE /api/v1/images/:id` handler performs the real deletion
-//! directly (storage + repo) and bypasses this service. A full implementation
-//! would look up the image, delete its variants + original from storage, then
-//! the DB row. See `docs/review-2026-07.md` §3.3.
+//! Single entry point for image deletion. Performs a soft delete of the DB
+//! row and a best-effort removal of the original object from storage, then
+//! emits an audit event. Callers remain responsible for authorization checks.
 
+use crate::repo::ImageRepository;
 use crate::ServiceError;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
-use picroom_domain::UserId;
+use picroom_domain::Image;
 use picroom_storage::StorageWriter;
+use std::sync::Arc;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Delete service (deferred stub — see module docs).
-#[derive(Debug, Clone)]
-pub struct DeleteService<S: StorageWriter, A: AuditSink> {
-    #[allow(dead_code)]
-    storage: S,
-    audit: A,
+/// Delete service — unified image deletion (storage + DB + audit).
+#[derive(Clone)]
+pub struct DeleteService {
+    storage: Arc<dyn StorageWriter + Send + Sync>,
+    repo: Arc<dyn ImageRepository>,
+    audit: Arc<dyn AuditSink>,
 }
 
-impl<S: StorageWriter, A: AuditSink> DeleteService<S, A> {
+impl DeleteService {
     /// Creates a new delete service.
-    pub const fn new(storage: S, audit: A) -> Self {
-        Self { storage, audit }
+    pub fn new(
+        storage: Arc<dyn StorageWriter + Send + Sync>,
+        repo: Arc<dyn ImageRepository>,
+        audit: Arc<dyn AuditSink>,
+    ) -> Self {
+        Self {
+            storage,
+            repo,
+            audit,
+        }
     }
 
-    /// Deletes an image (DB row + storage object) and emits audit event.
-    pub async fn delete(&self, actor_id: UserId, image_id: Uuid) -> Result<(), ServiceError> {
-        // Placeholder: real implementation looks up the storage key first.
+    /// Deletes an image (DB row + storage object) and emits an audit event.
+    ///
+    /// Takes the already-resolved [`Image`] so callers can perform authorization
+    /// and avoid a redundant lookup. This method only performs the deletion and
+    /// records the audit event.
+    pub async fn delete(&self, image: Image) -> Result<(), ServiceError> {
+        // Remove the original object (best-effort — a missing blob must not
+        // block the logical delete).
+        if let Err(e) = self.storage.delete(&image.key).await {
+            tracing::warn!(image_id = %image.id, error = %e, "storage delete failed");
+        }
+
+        // Soft-delete the DB row.
+        self.repo.delete(image.id).await?;
+
+        // Audit the deletion.
         let event = AuditEvent {
             id: Uuid::now_v7(),
             timestamp: OffsetDateTime::now_utc(),
-            actor_id: Some(actor_id.as_uuid()),
+            actor_id: None,
             actor_label: None,
             action: AuditAction::ImageDelete,
             target_type: "image".into(),
-            target_id: Some(image_id.to_string()),
+            target_id: Some(image.id.to_string()),
             ip: None,
             user_agent: None,
-            metadata: serde_json::Value::Null,
+            metadata: serde_json::json!({ "owner_id": image.owner_id.to_string() }),
         };
         self.audit
             .record(&event)

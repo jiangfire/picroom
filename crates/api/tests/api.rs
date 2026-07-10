@@ -9,6 +9,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use picroom_api::AppState;
 use picroom_audit::NoopAuditSink;
+use picroom_domain::{NewUser, User};
 use picroom_service::{ServiceError, UserCredentials, UserRepository};
 use picroom_storage::driver::LocalDriver;
 use serde_json::Value;
@@ -26,6 +27,26 @@ struct InMemoryUserRepo {
 impl UserRepository for InMemoryUserRepo {
     async fn find_by_email(&self, email: &str) -> Result<Option<UserCredentials>, ServiceError> {
         Ok(self.users.get(email).cloned())
+    }
+
+    async fn create_user(&self, new: &NewUser) -> Result<User, ServiceError> {
+        Ok(User {
+            id: picroom_domain::UserId(uuid::Uuid::now_v7()),
+            email: new.email.clone(),
+            name: new.name.clone(),
+            avatar_url: None,
+            role: new.role.clone(),
+            created_at: time::OffsetDateTime::now_utc(),
+            disabled: false,
+        })
+    }
+
+    async fn set_role(
+        &self,
+        _user_id: picroom_domain::UserId,
+        _role: &str,
+    ) -> Result<(), ServiceError> {
+        Ok(())
     }
 }
 
@@ -349,6 +370,86 @@ async fn api_rejects_missing_token() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+// ---------------------------------------------------------------------------
+// Admin handlers — create_user / set_role
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn admin_create_user_requires_admin_role() {
+    use axum::http::header::CONTENT_TYPE;
+    // A viewer-scoped token must be rejected (403), not 201.
+    let app = login_app();
+    let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
+    let token = jwt
+        .issue_with_scopes(uuid::Uuid::now_v7(), &["viewer".to_string()])
+        .unwrap();
+    let body =
+        serde_json::json!({ "email": "carol@example.com", "password": "supersecret1" }).to_string();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/users")
+                .header(CONTENT_TYPE, "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_create_user_returns_201_with_admin_token() {
+    use axum::http::header::CONTENT_TYPE;
+    let app = login_app();
+    let auth = bearer_token();
+    let body = serde_json::json!({
+        "email": "carol@example.com",
+        "password": "supersecret1",
+        "role": "uploader"
+    })
+    .to_string();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/users")
+                .header(CONTENT_TYPE, "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["email"], "carol@example.com");
+    assert_eq!(json["role"], "uploader");
+}
+
+#[tokio::test]
+async fn admin_set_role_returns_204() {
+    use axum::http::header::CONTENT_TYPE;
+    let app = login_app();
+    let auth = bearer_token();
+    let body = serde_json::json!({ "role": "manager" }).to_string();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/admin/users/00000000-0000-0000-0000-000000000001/role")
+                .header(CONTENT_TYPE, "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
 #[tokio::test]
 async fn api_rejects_forged_token() {
     // `Bearer garbage` must be rejected now (previously it passed).
