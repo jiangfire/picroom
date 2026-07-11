@@ -59,14 +59,3 @@ CREATE TABLE IF NOT EXISTS dlq (
     attempts        INTEGER NOT NULL,
     moved_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE TABLE IF NOT EXISTS quotas (
-    subject_type    VARCHAR(32) NOT NULL
-                       CHECK (subject_type IN ('user', 'team')),
-    subject_id      UUID NOT NULL,
-    bytes_used      BIGINT NOT NULL DEFAULT 0 CHECK (bytes_used >= 0),
-    bytes_limit     BIGINT NOT NULL CHECK (bytes_limit >= 0),
-    soft_limit      BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (subject_type, subject_id)
-);
