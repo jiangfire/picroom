@@ -237,12 +237,17 @@ jobs:
           if [ -z "$TOKEN" ]; then echo "login failed"; exit 1; fi
 
           # Upload (Bearer auth required on /api/v1/images)
-          RESP=$(curl -sf -X POST \
+          HTTP_CODE=$(curl -s -o /tmp/upload.json -w "%{http_code}" -X POST \
             -H "authorization: Bearer $TOKEN" \
             -F "file=@/tmp/test.png;type=image/png" \
             http://localhost:8080/api/v1/images)
-          echo "Upload response: $RESP"
-          IMAGE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Upload HTTP status: $HTTP_CODE"
+          echo "Upload response: $(cat /tmp/upload.json)"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "=== upload failed (HTTP $HTTP_CODE) ==="
+            exit 1
+          fi
+          IMAGE_ID=$(python3 -c "import json; print(json.load(open('/tmp/upload.json'))['id'])")
           echo "Image ID: $IMAGE_ID"
       - name: Kill API
         if: always()
@@ -306,12 +311,20 @@ jobs:
             --add-host=host.docker.internal:host-gateway \
             --name picroom-test \
             -e PICROOM_AUTH__JWT_SECRET \
+            -e RUST_BACKTRACE=full \
             -e PICROOM_DATABASE__URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
             -e DATABASE_URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
             -v /tmp/picroom-data:/data \
             picroom:ci-test api --bind 0.0.0.0:8080
           trap 'docker stop picroom-test >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 60); do
+            # Detect early container exit (crash) so we don't waste 2 minutes.
+            if ! docker ps --filter name=picroom-test --filter status=running --format '{{.Names}}' | grep -q .; then
+              echo "=== container exited before healthz responded ==="
+              docker inspect picroom-test --format 'exitCode={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' || true
+              echo "--- docker logs ---"; docker logs picroom-test 2>&1 || true
+              exit 1
+            fi
             if curl -sf --max-time 2 http://127.0.0.1:8080/healthz | grep -q '"ok"'; then
               echo "Docker image healthy"
               docker stop picroom-test >/dev/null 2>&1 || true
