@@ -303,10 +303,11 @@ jobs:
           # and probe it over 127.0.0.1. Logs/port are dumped on failure.
           docker run -d \
             -p 8080:8080 \
+            --add-host=host.docker.internal:host-gateway \
             --name picroom-test \
             -e PICROOM_AUTH__JWT_SECRET \
-            -e PICROOM_DATABASE__URL=postgres://picroom:picroom_test@localhost:5432/picroom_test \
-            -e DATABASE_URL=postgres://picroom:picroom_test@localhost:5432/picroom_test \
+            -e PICROOM_DATABASE__URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
+            -e DATABASE_URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
             -v /tmp/picroom-data:/data \
             picroom:ci-test api --bind 0.0.0.0:8080
           trap 'docker stop picroom-test >/dev/null 2>&1 || true' EXIT

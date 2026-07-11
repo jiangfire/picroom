@@ -103,8 +103,3 @@ CREATE TABLE IF NOT EXISTS audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events(actor_id);
-
-CREATE TABLE IF NOT EXISTS quotas (
-    user_id   TEXT PRIMARY KEY,
-    max_bytes INTEGER NOT NULL DEFAULT 1073741824
-);
