@@ -292,7 +292,12 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Verify binary exists in image
         run: |
-          docker run --rm picroom:ci-test --version
+          OUTPUT=$(docker run --rm picroom:ci-test --version 2>&1)
+          echo "Version: $OUTPUT"
+          echo "$OUTPUT" | grep -q "picroom" || {
+            echo "ERROR: binary produced no version output (stub fn main(){})?"
+            exit 1
+          }
       - name: Run migrations (PG)
         run: |
           cargo install sqlx-cli --no-default-features --features rustls,postgres || true

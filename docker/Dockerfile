@@ -29,8 +29,11 @@ RUN mkdir -p bin/picroom/src \
     && rm -rf bin/picroom/src/main.rs
 
 # Now build the real thing
+# Remove the stub binary produced above so cargo cannot reuse it via a
+# stale fingerprint (COPY restores main.rs but its mtime can be older than
+# the stub build, leaving the real code uncompiled).
 COPY . .
-RUN cargo build --release --bin picroom \
+RUN rm -f target/release/picroom && cargo build --release --bin picroom \
     && strip target/release/picroom
 
 # ============================================================================
