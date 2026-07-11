@@ -117,7 +117,7 @@ jobs:
         run: cargo install cargo-tarpaulin --locked
       # Interim floor (see job header). Raise toward 80 % as coverage grows.
       - name: Run coverage
-        run: cargo tarpaulin --workspace --fail-under 50 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
+        run: cargo tarpaulin --workspace --fail-under 60 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:

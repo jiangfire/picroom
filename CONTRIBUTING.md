@@ -48,8 +48,6 @@ task(1-2): add StorageKey::parse validation
 - Reject empty keys
 - Reject path traversal (..)
 - Reject keys longer than 1024 chars
-
-Refs: docs/tasks.md §1.2
 ```
 
 ```

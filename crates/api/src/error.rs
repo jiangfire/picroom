@@ -61,7 +61,7 @@ impl ApiError {
     ///
     /// The detail is **logged server-side only**; clients always receive a
     /// generic message so that storage backends, SQL errors, and filesystem
-    /// paths are never leaked to callers (see docs/review-2026-07.md §3.7).
+    /// paths are never leaked to callers.
     pub fn internal(message: impl Into<String>) -> Self {
         let detail = message.into();
         tracing::error!(error = %detail, "internal api error");

@@ -30,7 +30,7 @@ picroom admin user disable <uuid>
 
 > Note: the `admin user …` CLI is currently implemented for the SQLite backend
 > only. Against PostgreSQL, manage users via SQL or build the equivalent PG
-> path (see `docs/review-2026-07.md` §3.8).
+> path.
 
 ## 3. Storage health check
 

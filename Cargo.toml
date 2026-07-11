@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT"
@@ -89,7 +89,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # AWS / S3
 # (aws-sigv4 / aws-credential-types removed 2026-07: declared but never used —
-#  S3 SigV4 is implemented in-house in crates/s3compat. See docs/review-2026-07.md.)
+#  S3 SigV4 is implemented in-house in crates/s3compat.)
 quick-xml = { version = "0.41", features = ["serialize"] }
 
 # Image processing
@@ -99,7 +99,7 @@ rgb = "0.8"
 
 # OpenAPI
 # (utoipa / utoipa-swagger-ui removed 2026-07: declared but never imported —
-#  docs/api/openapi.yaml is hand-authored. See docs/review-2026-07.md §3.9.)
+#  docs/api/openapi.yaml is hand-authored.)
 
 # CLI
 clap = { version = "4.6", features = ["derive", "env"] }
@@ -110,17 +110,17 @@ rand_core = "0.6"
 
 # Internal crates — pinned to the workspace version so the graph is fully
 # versioned (spec §7.1) and cargo-deny's wildcard check is satisfied.
-picroom-domain = { path = "crates/domain", version = "0.1.0" }
-picroom-storage = { path = "crates/storage", version = "0.1.0" }
-picroom-imaging = { path = "crates/imaging", version = "0.1.0" }
-picroom-auth = { path = "crates/auth", version = "0.1.0" }
-picroom-audit = { path = "crates/audit", version = "0.1.0" }
-picroom-service = { path = "crates/service", version = "0.1.0" }
-picroom-api = { path = "crates/api", version = "0.1.0" }
-picroom-s3compat = { path = "crates/s3compat", version = "0.1.0" }
-picroom-worker = { path = "crates/worker", version = "0.1.0" }
-picroom-infra = { path = "crates/infra", version = "0.1.0" }
-picroom-admin = { path = "crates/admin", version = "0.1.0" }
+picroom-domain = { path = "crates/domain", version = "1.0.0" }
+picroom-storage = { path = "crates/storage", version = "1.0.0" }
+picroom-imaging = { path = "crates/imaging", version = "1.0.0" }
+picroom-auth = { path = "crates/auth", version = "1.0.0" }
+picroom-audit = { path = "crates/audit", version = "1.0.0" }
+picroom-service = { path = "crates/service", version = "1.0.0" }
+picroom-api = { path = "crates/api", version = "1.0.0" }
+picroom-s3compat = { path = "crates/s3compat", version = "1.0.0" }
+picroom-worker = { path = "crates/worker", version = "1.0.0" }
+picroom-infra = { path = "crates/infra", version = "1.0.0" }
+picroom-admin = { path = "crates/admin", version = "1.0.0" }
 
 # Dev / test dependencies (used in crate [dev-dependencies])
 mockall = "0.13"

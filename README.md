@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen)](#)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen)](#)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.79%2B-orange.svg)](https://www.rust-lang.org)
 
 Picroom is a self-hosted image bed built for engineering teams, content
 platforms, and SMBs who need more than a hobbyist PHP script but less than
@@ -97,9 +97,8 @@ abstractions are:
 - **`worker`**: async job consumer with retry + DLQ.
 - **`admin`**: CLI subcommands (migrate, user, team, audit).
 
-See [`docs/spec.md`](docs/spec.md) for full design, [`docs/plan.md`](docs/plan.md)
-for implementation phases, and [`docs/adr/`](docs/adr/) for architectural
-decision records.
+See [`docs/spec.md`](docs/spec.md) for the full design and [`docs/adr/`](docs/adr/)
+for architectural decision records.
 
 ## Development
 

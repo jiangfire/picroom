@@ -4,7 +4,7 @@
 - **Date**: 2026-07-06
 - **Deciders**: Picroom maintainers
 - **Supersedes**: None
-- **References**: `docs/review-2025-07.md`
+- **References**: 2025-07 baseline code review (historical; preserved in git history)
 
 ## Context
 
@@ -70,8 +70,8 @@ any public deployment.
 17. `/readyz` pings DB (`SELECT 1`) and storage (`storage.exists(dummy)`).
 18. `/metrics` uses `metrics-exporter-prometheus` for real counters.
 19. Worker retry applies `RetryPolicy::delay_secs()` as `sleep()`.
-    (Implemented 2026-07 in `crates/worker/src/pool.rs`; see
-    `docs/review-2026-07.md` §3.3 — previously this claim was aspirational.)
+    (Implemented 2026-07 in `crates/worker/src/pool.rs`; previously this
+    claim was aspirational.)
 
 ## Consequences
 

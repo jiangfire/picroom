@@ -1,11 +1,12 @@
 # Coverage Remediation Plan
 
-Spec §1.4 S5 calls for **≥ 80 % line coverage**. As of 2026-07-10 the
-workspace measured **~59 %** (tarpaulin, full workspace). Blocking every
-merge on an unmet 80 % target is counter-productive, so the CI `coverage`
-job enforces an **interim floor of 50 %** (binaries under `bin/` excluded
-from the denominator — they are thin CLI wiring, not unit-tested) while we
-grow coverage toward the spec target.
+Spec §1.4 S5 calls for **≥ 80 % line coverage**. As of 2026-07-11 the
+workspace measures **64.81 %** (tarpaulin, 2400/3703 lines, `bin/**`
+excluded). Blocking every merge on an unmet 80 % target is counter-
+productive, so the CI `coverage` job enforces an **interim floor of
+60 %** (binaries under `bin/` excluded from the denominator — they are
+thin CLI wiring, not unit-tested) while we grow coverage toward the spec
+target.
 
 ## Strategy
 
@@ -13,7 +14,7 @@ Raise the floor in steps as each area is covered:
 
 | Floor | Trigger |
 |-------|---------|
-| 50 %  | current (interim) |
+| 60 %  | current (1.0.0 release) |
 | 65 %  | after s3compat + storage driver tests |
 | 80 %  | after api/worker/infra tests — spec target |
 
