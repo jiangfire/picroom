@@ -50,7 +50,7 @@ impl QuotaService {
                     SELECT
                         COALESCE((SELECT max_bytes FROM quotas WHERE user_id = $1), $2::bigint),
                         COALESCE(
-                            (SELECT SUM(bytes) FROM images WHERE owner_id = $1 AND status != 'deleted'),
+                            (SELECT SUM(bytes)::bigint FROM images WHERE owner_id = $1 AND status != 'deleted'),
                             0
                         )
                     ",

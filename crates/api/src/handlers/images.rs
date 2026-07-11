@@ -77,6 +77,7 @@ pub async fn upload(
             {
                 return Err(ApiError::bad_request(s));
             }
+            tracing::error!("upload failed: {e}");
             return Err(ApiError::from(e));
         }
     };

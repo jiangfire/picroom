@@ -306,6 +306,18 @@ jobs:
           # /data volume is mounted because the LocalDriver roots there.
           # GitHub-hosted runners restrict `--network host`, so we publish 8080
           # and probe it over 127.0.0.1. Logs/port are dumped on failure.
+          # Foreground startup probe: run briefly in foreground to capture
+          # any startup output (distroless containers can exit silently).
+          echo "=== foreground startup probe (5s) ==="
+          timeout 5 docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
+            -e PICROOM_AUTH__JWT_SECRET \
+            -e RUST_BACKTRACE=full \
+            -e PICROOM_DATABASE__URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
+            -e DATABASE_URL=postgres://picroom:picroom_test@host.docker.internal:5432/picroom_test \
+            -v /tmp/picroom-data:/data \
+            picroom:ci-test api --bind 0.0.0.0:8080 2>&1 || true
+          echo "=== foreground probe complete ==="
           docker run -d \
             -p 8080:8080 \
             --add-host=host.docker.internal:host-gateway \
