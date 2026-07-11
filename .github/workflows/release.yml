@@ -87,16 +87,48 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------
-  # Build release binary for Linux x86_64 (post-MVP: multi-arch)
+  # Build release binaries for Linux (x86_64/aarch64), Windows (x86_64),
+  # and macOS (x86_64/aarch64). The release profile already strips symbols
+  # (Cargo.toml [profile.release] strip = "symbols"), so no manual strip.
   # ---------------------------------------------------------------------
   binary:
-    name: binary (linux-x86_64)
-    runs-on: ubuntu-latest
+    name: binary (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_ext: tar.gz
+            use_cross: false
+          - name: linux-aarch64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset_ext: tar.gz
+            use_cross: true
+          - name: windows-x86_64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_ext: zip
+            use_cross: false
+          - name: macos-x86_64
+            runner: macos-13
+            target: x86_64-apple-darwin
+            asset_ext: tar.gz
+            use_cross: false
+          - name: macos-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            asset_ext: tar.gz
+            use_cross: false
     steps:
       - uses: actions/checkout@v5
 
       - name: Resolve version
         id: version
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
@@ -106,31 +138,53 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Build binary
-        run: cargo build --release --locked --bin picroom
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --locked
 
-      - name: Strip
-        run: strip target/release/picroom
+      - name: Build (cargo)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin picroom
 
-      - name: Package
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --locked --target ${{ matrix.target }} --bin picroom
+
+      - name: Package (tar.gz)
+        if: matrix.asset_ext == 'tar.gz'
+        shell: bash
         run: |
-          mkdir -p picroom-${{ steps.version.outputs.version }}-linux-x86_64
-          cp target/release/picroom picroom-${{ steps.version.outputs.version }}-linux-x86_64/picroom
-          cp docker/config.example.toml picroom-${{ steps.version.outputs.version }}-linux-x86_64/config.example.toml
-          cp README.md LICENSE picroom-${{ steps.version.outputs.version }}-linux-x86_64/
-          tar czf picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz picroom-${{ steps.version.outputs.version }}-linux-x86_64
+          DIR="picroom-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          mkdir -p "$DIR"
+          cp "target/${{ matrix.target }}/release/picroom" "$DIR/picroom"
+          cp docker/config.example.toml "$DIR/config.example.toml"
+          cp README.md LICENSE "$DIR/"
+          tar czf "$DIR.tar.gz" "$DIR"
+
+      - name: Package (zip)
+        if: matrix.asset_ext == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "picroom-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/picroom.exe" "$dir/picroom.exe"
+          Copy-Item docker/config.example.toml "$dir/config.example.toml"
+          Copy-Item README.md, LICENSE "$dir/"
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: picroom-linux-x86_64
-          path: picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+          name: picroom-${{ matrix.name }}
+          path: picroom-${{ steps.version.outputs.version }}-${{ matrix.name }}.${{ matrix.asset_ext }}
 
       - name: Attach to release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v3
         with:
-          files: picroom-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+          files: picroom-${{ steps.version.outputs.version }}-${{ matrix.name }}.${{ matrix.asset_ext }}
           generate_release_notes: true
           draft: false
