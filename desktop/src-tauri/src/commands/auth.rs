@@ -31,17 +31,21 @@ pub struct Session {
     pub token: String,
 }
 
-#[tauri::command]
-pub async fn login(app: AppHandle, payload: LoginPayload) -> Result<LoginResult, String> {
-    let server_url = payload.server_url.trim_end_matches('/').to_string();
+/// Executes the login HTTP request against a Picroom server.
+async fn perform_login(
+    server_url: &str,
+    email: &str,
+    password: &str,
+    client: &reqwest::Client,
+) -> Result<LoginResult, String> {
+    let server_url = server_url.trim_end_matches('/').to_string();
     let login_url = format!("{server_url}/api/v1/auth/login");
 
     let body = serde_json::json!({
-        "email": payload.email,
-        "password": payload.password,
+        "email": email,
+        "password": password,
     });
 
-    let client = reqwest::Client::new();
     let response = client
         .post(&login_url)
         .json(&body)
@@ -59,14 +63,28 @@ pub async fn login(app: AppHandle, payload: LoginPayload) -> Result<LoginResult,
         .ok_or("missing access_token in response")?
         .to_string();
 
-    upsert_profile(&app, &server_url, &payload.email, &token)?;
-    config::set_active_profile_name(&app, Some("default"))?;
-
     Ok(LoginResult {
-        email: payload.email,
+        email: email.to_string(),
         server_url,
         token,
     })
+}
+
+#[tauri::command]
+pub async fn login(app: AppHandle, payload: LoginPayload) -> Result<LoginResult, String> {
+    let client = reqwest::Client::new();
+    let result = perform_login(
+        &payload.server_url,
+        &payload.email,
+        &payload.password,
+        &client,
+    )
+    .await?;
+
+    upsert_profile(&app, &result.server_url, &result.email, &result.token)?;
+    config::set_active_profile_name(&app, Some("default"))?;
+
+    Ok(result)
 }
 
 fn upsert_profile(
@@ -159,4 +177,52 @@ pub fn remove_profile(app: AppHandle, name: String) -> Result<(), String> {
         config::set_active_profile_name(&app, None)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn perform_login_returns_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/auth/login"))
+            .and(body_json(serde_json::json!({
+                "email": "admin@example.com",
+                "password": "secret",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "abc123",
+            })))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = perform_login(&server.uri(), "admin@example.com", "secret", &client)
+            .await
+            .unwrap();
+
+        assert_eq!(result.email, "admin@example.com");
+        assert_eq!(result.token, "abc123");
+        assert!(result.server_url.starts_with("http://127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn perform_login_propagates_error_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/auth/login"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = perform_login(&server.uri(), "admin@example.com", "secret", &client).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("401"));
+    }
 }
