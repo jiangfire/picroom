@@ -15,22 +15,24 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+permissions:
+  contents: write   # create GitHub Release and attach binary assets
+  packages: write   # push container images to GHCR
+
 jobs:
   # ---------------------------------------------------------------------
   # Build and push Docker images for amd64 + arm64
   # ---------------------------------------------------------------------
   docker:
-    name: docker (${{ matrix.platform }})
+    name: docker (linux-${{ matrix.arch }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - os: ubuntu-latest
-            arch: amd64
+        include:
+          - arch: amd64
             qemu_arch: amd64
-          - os: ubuntu-latest
-            arch: arm64
+          - arch: arm64
             qemu_arch: arm64
     steps:
       - uses: actions/checkout@v5
