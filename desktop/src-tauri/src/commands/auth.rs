@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Picroom Contributors
+
+//! Tauri commands for Picroom admin authentication and session management.
+
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+use crate::config;
+use crate::config::Profile;
+
+#[derive(Debug, Deserialize)]
+pub struct LoginPayload {
+    pub server_url: String,
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoginResult {
+    pub email: String,
+    pub server_url: String,
+    pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Session {
+    pub name: String,
+    pub server_url: String,
+    pub email: String,
+    pub token: String,
+}
+
+#[tauri::command]
+pub async fn login(app: AppHandle, payload: LoginPayload) -> Result<LoginResult, String> {
+    let server_url = payload.server_url.trim_end_matches('/').to_string();
+    let login_url = format!("{server_url}/api/v1/auth/login");
+
+    let body = serde_json::json!({
+        "email": payload.email,
+        "password": payload.password,
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&login_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("login failed: {}", response.status()));
+    }
+
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let token = json["access_token"]
+        .as_str()
+        .ok_or("missing access_token in response")?
+        .to_string();
+
+    upsert_profile(&app, &server_url, &payload.email, &token)?;
+    config::set_active_profile_name(&app, Some("default"))?;
+
+    Ok(LoginResult {
+        email: payload.email,
+        server_url,
+        token,
+    })
+}
+
+fn upsert_profile(
+    app: &AppHandle,
+    server_url: &str,
+    email: &str,
+    token: &str,
+) -> Result<(), String> {
+    let mut profiles = config::load_profiles(app)?;
+    let mut found = false;
+    for profile in &mut profiles {
+        if profile.name == "default" {
+            profile.server_url = server_url.to_string();
+            profile.email = email.to_string();
+            profile.token = Some(token.to_string());
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        profiles.push(Profile {
+            name: "default".into(),
+            server_url: server_url.into(),
+            email: email.into(),
+            token: Some(token.into()),
+        });
+    }
+    config::save_profiles(app, &profiles)
+}
+
+#[tauri::command]
+pub fn logout(app: AppHandle) -> Result<(), String> {
+    let mut profiles = config::load_profiles(&app)?;
+    let active = config::active_profile_name(&app)?;
+    if let Some(ref name) = active {
+        if let Some(profile) = profiles.iter_mut().find(|p| &p.name == name) {
+            profile.token = None;
+        }
+    }
+    config::save_profiles(&app, &profiles)?;
+    config::set_active_profile_name(&app, None)
+}
+
+#[tauri::command]
+pub fn get_session(app: AppHandle) -> Result<Option<Session>, String> {
+    let profile = config::load_active_profile(&app)?;
+    Ok(profile.and_then(|p| {
+        p.token.map(|token| Session {
+            name: p.name,
+            server_url: p.server_url,
+            email: p.email,
+            token,
+        })
+    }))
+}
+
+#[tauri::command]
+pub fn list_profiles(app: AppHandle) -> Result<Vec<Profile>, String> {
+    config::load_profiles(&app)
+}
+
+#[tauri::command]
+pub fn save_profile(app: AppHandle, profile: Profile) -> Result<(), String> {
+    let mut profiles = config::load_profiles(&app)?;
+    let mut found = false;
+    for p in &mut profiles {
+        if p.name == profile.name {
+            *p = profile.clone();
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        profiles.push(profile);
+    }
+    config::save_profiles(&app, &profiles)
+}
+
+#[tauri::command]
+pub fn set_active_profile(app: AppHandle, name: String) -> Result<(), String> {
+    config::set_active_profile_name(&app, Some(&name))
+}
+
+#[tauri::command]
+pub fn remove_profile(app: AppHandle, name: String) -> Result<(), String> {
+    let mut profiles = config::load_profiles(&app)?;
+    profiles.retain(|p| p.name != name);
+    config::save_profiles(&app, &profiles)?;
+    if config::active_profile_name(&app)?.as_ref() == Some(&name) {
+        config::set_active_profile_name(&app, None)?;
+    }
+    Ok(())
+}

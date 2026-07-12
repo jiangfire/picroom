@@ -72,3 +72,11 @@ logs/
 *.rej
 # Runtime artifacts (local storage dir created when running the API)
 /data/
+
+# Desktop client (Tauri / Vite / Node)
+/desktop/node_modules/
+/desktop/dist/
+/desktop/.cache/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/.env
