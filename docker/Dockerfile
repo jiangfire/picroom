@@ -28,12 +28,16 @@ RUN mkdir -p bin/picroom/src \
     && cargo build --release --bin picroom \
     && rm -rf bin/picroom/src/main.rs
 
-# Now build the real thing
-# Remove the stub binary produced above so cargo cannot reuse it via a
-# stale fingerprint (COPY restores main.rs but its mtime can be older than
-# the stub build, leaving the real code uncompiled).
+# Now build the real thing. `cargo clean -p picroom --release` removes the
+# stub's compiled object AND fingerprint (not just the linked binary), so
+# main.rs is guaranteed to recompile. Required because Docker COPY restores
+# main.rs with an mtime that may not be newer than the stub build, which
+# would leave Cargo's fingerprint considering the crate fresh and re-linking
+# the no-op stub. Dependency artifacts are preserved, keeping the stub
+# step's cache benefit.
 COPY . .
-RUN rm -f target/release/picroom && cargo build --release --bin picroom \
+RUN cargo clean -p picroom --release \
+    && cargo build --release --bin picroom \
     && strip target/release/picroom
 
 # ============================================================================
