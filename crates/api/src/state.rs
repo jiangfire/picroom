@@ -8,7 +8,9 @@ use bytes::Bytes;
 use picroom_audit::{AuditReader, AuditSink};
 use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
-use picroom_service::repo::{ImageRepository, TeamRepository, UserRepository};
+use picroom_service::repo::{
+    ImageRepository, StoragePolicyRepository, TeamRepository, UserRepository,
+};
 use picroom_service::DeleteService;
 use picroom_service::PermissionService;
 use picroom_service::QuotaService;
@@ -45,10 +47,15 @@ pub struct AppState {
     pub team_repo: Option<Arc<dyn TeamRepository>>,
     /// Audit log reader (None when running without a DB).
     pub audit_reader: Option<Arc<dyn AuditReader>>,
+    /// Storage-policy repository (None when running without a DB).
+    pub storage_policy_repo: Option<Arc<dyn StoragePolicyRepository>>,
     /// Unified delete service (None when running without a DB).
     pub delete_service: Option<Arc<DeleteService>>,
     /// Optional S3 client credential; when set, the S3 endpoint enforces `SigV4`.
     pub s3_credentials: Option<picroom_s3compat::S3Credential>,
+    /// Public base URL for image links (e.g. `"https://cdn.example.com"`).
+    /// When `None`, the link handler emits a path-relative `/i/{key}` URL.
+    pub public_url_base: Option<String>,
 }
 
 impl JwtProvider for AppState {
@@ -92,6 +99,8 @@ impl AppState {
             audit_reader: None,
             delete_service: None,
             s3_credentials: None,
+            public_url_base: None,
+            storage_policy_repo: None,
         }
     }
 
@@ -99,6 +108,20 @@ impl AppState {
     #[must_use]
     pub fn with_user_repo(mut self, repo: Arc<dyn UserRepository>) -> Self {
         self.user_repo = Some(repo);
+        self
+    }
+
+    /// Attaches an image repository so image/list/link handlers can read metadata.
+    #[must_use]
+    pub fn with_image_repo(mut self, repo: Arc<dyn ImageRepository>) -> Self {
+        self.image_repo = Some(repo);
+        self
+    }
+
+    /// Sets the public base URL used to build absolute image links.
+    #[must_use]
+    pub fn with_public_url_base(mut self, base: String) -> Self {
+        self.public_url_base = Some(base);
         self
     }
 

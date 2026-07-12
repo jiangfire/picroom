@@ -8,6 +8,7 @@ use crate::extractors::auth::AuthUser;
 use crate::state::AppState;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use bytes::Bytes;
 use picroom_auth::{PermissionAction, ResourceType};
 use picroom_domain::{ImageId, TeamId};
@@ -235,4 +236,80 @@ pub async fn delete(
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/images/:id/link` — generate the public link ("公链") for an image.
+///
+/// Returns `{ "public_url": "…", "expires_at": null }`. The URL targets the
+/// unauthenticated `/i/{key}` route. When `server.public_url_base` is
+/// configured it is an absolute URL; otherwise it is a path-relative URL the
+/// caller resolves against the server it is talking to.
+///
+/// Access uses the same IDOR gate as `GET /images/:id`: the owner, or any
+/// principal with the `Image/Update` permission (manager/admin via RBAC).
+pub async fn link(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<axum::Json<serde_json::Value>, ApiError> {
+    let Some(repo) = &state.image_repo else {
+        return Err(ApiError::internal("image repo not configured"));
+    };
+    let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
+    if auth.user_id != image.owner_id
+        && state
+            .permissions
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+            .is_err()
+    {
+        return Err(ApiError::forbidden("not allowed"));
+    }
+
+    let public_url = public_url_for(state.public_url_base.as_deref(), &image.key);
+
+    Ok(axum::Json(json!({
+        "public_url": public_url,
+        "expires_at": null,
+    })))
+}
+
+/// `GET /api/v1/images/:id/file` — 302 redirect to the public object URL.
+///
+/// Same access gate as `link`. Convenient for browsers/clients that want to
+/// follow a redirect straight to the bytes rather than reading a JSON link.
+pub async fn file(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(repo) = &state.image_repo else {
+        return Err(ApiError::internal("image repo not configured"));
+    };
+    let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
+    if auth.user_id != image.owner_id
+        && state
+            .permissions
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+            .is_err()
+    {
+        return Err(ApiError::forbidden("not allowed"));
+    }
+
+    let location = public_url_for(state.public_url_base.as_deref(), &image.key);
+    Ok((
+        axum::http::StatusCode::FOUND,
+        [(axum::http::header::LOCATION, location.as_str())],
+    )
+        .into_response())
+}
+
+/// Builds the public URL for a storage key.
+///
+/// Absolute when `base` is set (`{base}/i/{key}`), path-relative otherwise
+/// (`/i/{key}`) so the caller can resolve it against the server it knows.
+fn public_url_for(base: Option<&str>, key: &picroom_domain::StorageKey) -> String {
+    match base {
+        Some(b) => format!("{}/i/{}", b.trim_end_matches('/'), key.as_str()),
+        None => format!("/i/{}", key.as_str()),
+    }
 }

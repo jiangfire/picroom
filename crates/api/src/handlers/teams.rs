@@ -97,6 +97,32 @@ pub async fn get(
     })))
 }
 
+/// `GET /api/v1/teams` — list all teams.
+pub async fn list(
+    State(state): State<Arc<AppState>>,
+    _auth: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo = state
+        .team_repo
+        .as_ref()
+        .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
+    let teams = repo.list().await.map_err(ApiError::from)?;
+    let items: Vec<serde_json::Value> = teams
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id.to_string(),
+                "name": t.name,
+                "slug": t.slug,
+                "description": t.description,
+                "storage_policy": t.storage_policy,
+                "created_at": t.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
 /// `POST /api/v1/teams/:id/members` — add (or update) a member.
 ///
 /// Requires the `Team::Update` permission (manager/admin via RBAC).
@@ -121,6 +147,33 @@ pub async fn add_member(
     record_team_event(&state, AuditAction::TeamMemberAdd, id.to_string(), &auth).await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/teams/:id/members` — list the members of a team.
+pub async fn list_members(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    _auth: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo = state
+        .team_repo
+        .as_ref()
+        .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
+    let members = repo
+        .list_members(TeamId(id))
+        .await
+        .map_err(ApiError::from)?;
+    let items: Vec<serde_json::Value> = members
+        .iter()
+        .map(|m| {
+            json!({
+                "user_id": m.user_id.to_string(),
+                "role": m.role,
+                "joined_at": m.joined_at,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 /// Records a team-related audit event (best-effort; failures are logged, not fatal).

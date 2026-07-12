@@ -401,11 +401,79 @@ paths:
       - $ref: '#/components/parameters/ImageId'
     get:
       tags: [images]
-      summary: Get original image bytes (redirect to storage)
+      summary: Get original image bytes (redirect to public URL)
       operationId: getImageFile
       responses:
         '302':
-          description: Redirect to signed storage URL
+          description: Redirect to the public /i/{key} URL
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/link:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: Get the public link ("公链") for an image
+      operationId: getImageLink
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [public_url]
+                properties:
+                  public_url:
+                    type: string
+                    description: Absolute URL when server.public_url_base is set, else path-relative.
+                  expires_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /i/{key}:
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+        description: Storage key (e.g. `img/{uuid}.bin`), may contain slashes.
+    get:
+      tags: [images]
+      summary: Public image bytes (no auth, "公链")
+      description: |
+        Serves raw object bytes without authentication. Knowing the key grants
+        read access (keys are unguessable UUIDs). Content-Type is sniffed from
+        magic bytes. Cached immutably (1 year).
+      operationId: getPublicObject
+      security: []
+      responses:
+        '200':
+          description: OK
+          headers:
+            Content-Type:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -501,6 +569,42 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
   /api/v1/admin/users:
+    get:
+      tags: [admin]
+      summary: List users
+      operationId: adminListUsers
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  next_cursor:
+                    type: string
+                    nullable: true
+                  has_more:
+                    type: boolean
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [admin]
       summary: Create a user
@@ -518,6 +622,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+
+  /api/v1/admin/users/{userId}/disable:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [admin]
+      summary: Disable a user
+      operationId: adminDisableUser
+      responses:
+        '204':
+          description: Disabled
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/admin/users/{userId}/enable:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [admin]
+      summary: Re-enable a user
+      operationId: adminEnableUser
+      responses:
+        '204':
+          description: Enabled
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/admin/users/{userId}/role:
     parameters:

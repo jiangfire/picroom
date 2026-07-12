@@ -21,7 +21,8 @@ pub use permission::PermissionService;
 pub use query::ImageQueryService;
 pub use quota::QuotaService;
 pub use repo::{
-    ImageRepository, PgImageRepository, PgUserRepository, PgVariantRepository, UserCredentials,
-    UserRepository,
+    ImageRepository, PgImageRepository, PgStoragePolicyRepository, PgTeamRepository,
+    PgUserRepository, PgVariantRepository, StoragePolicy, StoragePolicyRepository, TeamRepository,
+    UserCredentials, UserRepository,
 };
 pub use upload::UploadService;

@@ -58,6 +58,10 @@ pub enum AuditAction {
     UserCreate,
     /// Admin changed a user role.
     UserRoleChange,
+    /// Admin disabled a user.
+    UserDisable,
+    /// Admin re-enabled a user.
+    UserEnable,
     /// Admin created a storage policy.
     StoragePolicyCreate,
     /// Admin changed a storage policy.
@@ -82,6 +86,8 @@ impl AuditAction {
             Self::TeamMemberRemove => "team.member_remove",
             Self::UserCreate => "user.create",
             Self::UserRoleChange => "user.role_change",
+            Self::UserDisable => "user.disable",
+            Self::UserEnable => "user.enable",
             Self::StoragePolicyCreate => "storage_policy.create",
             Self::StoragePolicyUpdate => "storage_policy.update",
             Self::PermissionDenied => "permission.denied",
@@ -102,6 +108,8 @@ impl AuditAction {
             "team.member_remove" => Self::TeamMemberRemove,
             "user.create" => Self::UserCreate,
             "user.role_change" => Self::UserRoleChange,
+            "user.disable" => Self::UserDisable,
+            "user.enable" => Self::UserEnable,
             "storage_policy.create" => Self::StoragePolicyCreate,
             "storage_policy.update" => Self::StoragePolicyUpdate,
             "permission.denied" => Self::PermissionDenied,

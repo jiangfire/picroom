@@ -60,6 +60,11 @@ pub struct ServerConfig {
     pub graceful_shutdown_secs: u64,
     /// Max request body size in MB.
     pub max_body_mb: u32,
+    /// Public base URL used to build image links, e.g. `"https://cdn.example.com"`.
+    /// When set, public links are `{public_url_base}/i/{key}`. When unset, the
+    /// link handler falls back to the incoming request's scheme + host.
+    #[serde(default)]
+    pub public_url_base: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -69,6 +74,7 @@ impl Default for ServerConfig {
             request_timeout_secs: 30,
             graceful_shutdown_secs: 30,
             max_body_mb: 100,
+            public_url_base: None,
         }
     }
 }

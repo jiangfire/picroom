@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use picroom_audit::{AuditAction, AuditEvent};
 use picroom_auth::{PasswordHasher, PermissionAction, ResourceType, Role};
-use picroom_domain::{NewUser, UserId};
+use picroom_domain::{NewUser, PageReq, UserId};
 use serde::Deserialize;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -154,6 +154,120 @@ pub async fn set_role(
         ip: None,
         user_agent: None,
         metadata: serde_json::json!({ "role": role.as_str() }),
+    };
+    state
+        .audit
+        .record(&event)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Query parameters for `GET /api/v1/admin/users`.
+#[derive(Debug, Default, Deserialize)]
+pub struct ListUsersParams {
+    /// Page size.
+    pub limit: Option<u32>,
+    /// Pagination cursor.
+    pub cursor: Option<String>,
+}
+
+/// `GET /api/v1/admin/users` — list users (admin-only).
+pub async fn list_users(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<ListUsersParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .permissions
+        .check(&auth.roles, ResourceType::User, PermissionAction::Admin)
+        .map_err(ApiError::from)?;
+
+    let repo = state
+        .user_repo
+        .as_ref()
+        .ok_or_else(|| ApiError::not_implemented("user repository not configured"))?;
+
+    let page = PageReq {
+        limit: params.limit.unwrap_or(50).clamp(1, 200),
+        cursor: params.cursor,
+    };
+    let result = repo.list(page).await.map_err(ApiError::from)?;
+    let items: Vec<serde_json::Value> = result
+        .items
+        .iter()
+        .map(|u| {
+            serde_json::json!({
+                "id": u.id.to_string(),
+                "email": u.email,
+                "name": u.name,
+                "role": u.role,
+                "disabled": u.disabled,
+                "created_at": u.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "items": items,
+        "has_more": result.has_more,
+        "next_cursor": result.next_cursor,
+    })))
+}
+
+/// `POST /api/v1/admin/users/:id/disable` — disable a user (admin-only).
+pub async fn disable_user(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    set_user_disabled(&state, &auth, &user_id, true, AuditAction::UserDisable).await
+}
+
+/// `POST /api/v1/admin/users/:id/enable` — re-enable a user (admin-only).
+pub async fn enable_user(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    set_user_disabled(&state, &auth, &user_id, false, AuditAction::UserEnable).await
+}
+
+/// Shared body for enable/disable: permission check, repo update, audit record.
+async fn set_user_disabled(
+    state: &AppState,
+    auth: &AuthUser,
+    user_id: &str,
+    disabled: bool,
+    action: AuditAction,
+) -> Result<StatusCode, ApiError> {
+    state
+        .permissions
+        .check(&auth.roles, ResourceType::User, PermissionAction::Admin)
+        .map_err(ApiError::from)?;
+
+    let repo = state
+        .user_repo
+        .as_ref()
+        .ok_or_else(|| ApiError::not_implemented("user repository not configured"))?;
+
+    let uid = UserId::from_str(user_id).map_err(|_| ApiError::bad_request("invalid user id"))?;
+    repo.set_disabled(uid, disabled)
+        .await
+        .map_err(ApiError::from)?;
+
+    let event = AuditEvent {
+        id: Uuid::now_v7(),
+        timestamp: OffsetDateTime::now_utc(),
+        actor_id: Some(auth.user_id.as_uuid()),
+        actor_label: None,
+        action,
+        target_type: "user".into(),
+        target_id: Some(uid.to_string()),
+        ip: None,
+        user_agent: None,
+        metadata: serde_json::json!({ "disabled": disabled }),
     };
     state
         .audit

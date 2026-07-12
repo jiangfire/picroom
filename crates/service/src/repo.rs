@@ -8,7 +8,9 @@
 
 use crate::ServiceError;
 use async_trait::async_trait;
-use picroom_domain::{Image, ImageId, NewUser, Page, PageReq, Team, TeamId, User, UserId};
+use picroom_domain::{
+    Image, ImageId, NewUser, Page, PageReq, Team, TeamId, TeamMember, User, UserId,
+};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -269,6 +271,12 @@ pub trait UserRepository: Send + Sync {
     async fn create_user(&self, new: &NewUser) -> Result<User, ServiceError>;
     /// Updates a user's role.
     async fn set_role(&self, user_id: UserId, role: &str) -> Result<(), ServiceError>;
+    /// Lists users (newest first), cursor-paginated on `(created_at, id)`.
+    async fn list(&self, page: PageReq) -> Result<Page<User>, ServiceError>;
+    /// Looks up a user by id. `Ok(None)` means "no such user".
+    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, ServiceError>;
+    /// Sets the user's disabled flag.
+    async fn set_disabled(&self, id: UserId, disabled: bool) -> Result<(), ServiceError>;
 }
 
 /// PostgreSQL-backed user repository.
@@ -338,6 +346,118 @@ impl UserRepository for PgUserRepository {
             .map_err(|e| ServiceError::Internal(format!("set role: {e}")))?;
         Ok(())
     }
+
+    async fn list(&self, page: PageReq) -> Result<Page<User>, ServiceError> {
+        let limit = i64::from(page.limit.clamp(1, 200));
+        let (cursor_ts, cursor_id) = parse_composite_cursor(page.cursor.as_deref())?;
+        // Fetch one extra row to detect whether another page follows.
+        let rows: Vec<UserRow> = sqlx::query_as::<_, UserRow>(
+            r"SELECT id, email, name, role, disabled, created_at FROM users
+              WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid))
+              ORDER BY created_at DESC, id DESC
+              LIMIT $3",
+        )
+        .bind(cursor_ts)
+        .bind(cursor_id)
+        .bind(limit + 1)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list users: {e}")))?;
+
+        let has_more = rows.len() as i64 > limit;
+        let page_rows: &[UserRow] = if has_more {
+            &rows[..limit as usize]
+        } else {
+            &rows[..]
+        };
+        let users: Vec<User> = page_rows.iter().map(user_from_row).collect();
+        let next_cursor = if has_more {
+            page_rows
+                .last()
+                .map(|r| format_cursor(r.created_at, r.id))
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(Page::new(users, next_cursor, page))
+    }
+
+    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, ServiceError> {
+        let row: Option<UserRow> = sqlx::query_as::<_, UserRow>(
+            r"SELECT id, email, name, role, disabled, created_at FROM users WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("find user by id: {e}")))?;
+        Ok(row.map(|r| user_from_row(&r)))
+    }
+
+    async fn set_disabled(&self, id: UserId, disabled: bool) -> Result<(), ServiceError> {
+        sqlx::query(r"UPDATE users SET disabled = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id.as_uuid())
+            .bind(disabled)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("set disabled: {e}")))?;
+        Ok(())
+    }
+}
+
+/// Row projection for the `users` table used by `list` / `find_by_id`.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct UserRow {
+    /// User id.
+    id: Uuid,
+    /// Email.
+    email: String,
+    /// Display name.
+    name: String,
+    /// Global role.
+    role: String,
+    /// Disabled flag.
+    disabled: bool,
+    /// Creation timestamp.
+    created_at: OffsetDateTime,
+}
+
+/// Maps a `UserRow` into a `User` domain entity (`avatar_url` is not persisted).
+fn user_from_row(r: &UserRow) -> User {
+    User {
+        id: UserId(r.id),
+        email: r.email.clone(),
+        name: r.name.clone(),
+        avatar_url: None,
+        role: r.role.clone(),
+        created_at: r.created_at,
+        disabled: r.disabled,
+    }
+}
+
+/// Decodes a composite `created_at|id` cursor into its parts.
+fn parse_composite_cursor(
+    cursor: Option<&str>,
+) -> Result<(Option<OffsetDateTime>, Option<Uuid>), ServiceError> {
+    let Some(c) = cursor else {
+        return Ok((None, None));
+    };
+    let parts: Vec<&str> = c.splitn(2, '|').collect();
+    if parts.len() != 2 {
+        return Err(ServiceError::Internal(format!("invalid cursor: {c}")));
+    }
+    let ts = OffsetDateTime::parse(parts[0], &time::format_description::well_known::Rfc3339)
+        .map_err(|e| ServiceError::Internal(format!("invalid cursor ts: {e}")))?;
+    let id = Uuid::parse_str(parts[1])
+        .map_err(|e| ServiceError::Internal(format!("invalid cursor id: {e}")))?;
+    Ok((Some(ts), Some(id)))
+}
+
+/// Encodes a `(created_at, id)` pair into the opaque cursor string.
+fn format_cursor(ts: OffsetDateTime, id: Uuid) -> Result<String, ServiceError> {
+    let ts = ts
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| ServiceError::Internal(format!("format cursor: {e}")))?;
+    Ok(format!("{ts}|{id}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +532,8 @@ pub trait TeamRepository: Send + Sync {
         user_id: UserId,
         role: &str,
     ) -> Result<(), ServiceError>;
+    /// Lists the members of a team (oldest join first).
+    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError>;
 }
 
 /// PostgreSQL-backed team repository.
@@ -515,6 +637,108 @@ impl TeamRepository for PgTeamRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("add member: {e}")))?;
+        Ok(())
+    }
+
+    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError> {
+        let rows: Vec<(Uuid, Uuid, String, OffsetDateTime)> = sqlx::query_as(
+            r"SELECT team_id, user_id, role, joined_at FROM team_members
+              WHERE team_id = $1 ORDER BY joined_at ASC",
+        )
+        .bind(team_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list members: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(tid, uid, role, joined_at)| TeamMember {
+                team_id: TeamId(tid),
+                user_id: UserId(uid),
+                role,
+                joined_at,
+            })
+            .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Storage policy repository (PG)
+// ---------------------------------------------------------------------------
+
+/// A named storage policy row (mirrors the `storage_policies` table).
+///
+/// Lives in the service layer (not `domain`) because it carries a
+/// `serde_json::Value` config blob and is a persistence concern.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoragePolicy {
+    /// Policy name (primary key, referenced by `images.storage_policy`).
+    pub name: String,
+    /// Driver kind: `local`, `s3`, `oss`, `cos`, `qiniu`, `minio`.
+    pub driver: String,
+    /// Driver-specific config (JSON object).
+    pub config: serde_json::Value,
+    /// Whether this is the default policy.
+    pub is_default: bool,
+}
+
+/// Repository for the `storage_policies` table.
+#[async_trait]
+pub trait StoragePolicyRepository: Send + Sync {
+    /// Lists all storage policies, ordered by name.
+    async fn list(&self) -> Result<Vec<StoragePolicy>, ServiceError>;
+    /// Creates a storage policy. Fails on duplicate name.
+    async fn create(&self, policy: &StoragePolicy) -> Result<(), ServiceError>;
+}
+
+/// PostgreSQL-backed storage-policy repository.
+#[derive(Debug, Clone)]
+pub struct PgStoragePolicyRepository {
+    pool: PgPool,
+}
+
+impl PgStoragePolicyRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl StoragePolicyRepository for PgStoragePolicyRepository {
+    async fn list(&self) -> Result<Vec<StoragePolicy>, ServiceError> {
+        // Read `config` as text (the `json` sqlx feature is intentionally not
+        // enabled workspace-wide), then parse in Rust.
+        let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
+            r"SELECT name, driver, config::text, is_default FROM storage_policies ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list storage policies: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(name, driver, config_text, is_default)| StoragePolicy {
+                name,
+                driver,
+                config: serde_json::from_str(&config_text).unwrap_or(serde_json::Value::Null),
+                is_default,
+            })
+            .collect())
+    }
+
+    async fn create(&self, policy: &StoragePolicy) -> Result<(), ServiceError> {
+        let config_str = serde_json::to_string(&policy.config)
+            .map_err(|e| ServiceError::Internal(format!("serialize config: {e}")))?;
+        sqlx::query(
+            r"INSERT INTO storage_policies (name, driver, config, is_default)
+              VALUES ($1, $2, $3::jsonb, $4)",
+        )
+        .bind(&policy.name)
+        .bind(&policy.driver)
+        .bind(&config_str)
+        .bind(policy.is_default)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("create storage policy: {e}")))?;
         Ok(())
     }
 }

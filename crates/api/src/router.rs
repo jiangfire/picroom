@@ -17,6 +17,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/healthz", get(super::handlers::system::healthz))
         .route("/readyz", get(super::handlers::system::readyz))
         .route("/metrics", get(super::handlers::system::metrics))
+        // Public image bytes ("公链") — unauthenticated; see ADR 0007.
+        // require_auth only enforces /api/v1/*, so this stays open.
+        .route("/i/*key", get(super::handlers::public::serve_object))
         // Auth (open)
         .route("/api/v1/auth/login", post(super::handlers::auth::login))
         .route("/api/v1/auth/logout", post(super::handlers::auth::logout))
@@ -29,21 +32,46 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/images/:id",
             get(super::handlers::images::get).delete(super::handlers::images::delete),
         )
-        .route("/api/v1/teams", post(super::handlers::teams::create))
+        .route(
+            "/api/v1/images/:id/link",
+            get(super::handlers::images::link),
+        )
+        .route(
+            "/api/v1/images/:id/file",
+            get(super::handlers::images::file),
+        )
+        .route(
+            "/api/v1/teams",
+            post(super::handlers::teams::create).get(super::handlers::teams::list),
+        )
         .route("/api/v1/teams/:id", get(super::handlers::teams::get))
         .route(
             "/api/v1/teams/:id/members",
-            post(super::handlers::teams::add_member),
+            post(super::handlers::teams::add_member).get(super::handlers::teams::list_members),
         )
         .route(
             "/api/v1/admin/users",
-            post(super::handlers::admin::create_user),
+            post(super::handlers::admin::create_user).get(super::handlers::admin::list_users),
         )
         .route(
             "/api/v1/admin/users/:id/role",
             patch(super::handlers::admin::set_role),
         )
+        .route(
+            "/api/v1/admin/users/:id/disable",
+            post(super::handlers::admin::disable_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/enable",
+            post(super::handlers::admin::enable_user),
+        )
         .route("/api/v1/audit", get(super::handlers::admin::audit))
+        // Storage-policy management (admin-only)
+        .route(
+            "/api/v1/admin/storage/policies",
+            get(super::handlers::storage::list_policies)
+                .post(super::handlers::storage::create_policy),
+        )
         // S3-compat (open — SigV4 verified per-request)
         .nest(
             "/s3",

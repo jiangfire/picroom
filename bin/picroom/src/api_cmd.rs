@@ -5,6 +5,7 @@
 
 use crate::app::{build_deps, DatabaseHandle};
 use picroom_api::AppState;
+use picroom_service::{PgStoragePolicyRepository, StoragePolicyRepository};
 use picroom_storage::StorageWriter;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -77,6 +78,13 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
             deps.audit.clone(),
         ))
     });
+    // Storage-policy repo is only available on PostgreSQL.
+    let storage_policy_repo: Option<Arc<dyn StoragePolicyRepository>> = match &deps.db {
+        Some(DatabaseHandle::Pg(pool)) => {
+            Some(Arc::new(PgStoragePolicyRepository::new(pool.clone())))
+        }
+        _ => None,
+    };
 
     let state = Arc::new(AppState {
         upload: Arc::new(upload),
@@ -92,6 +100,8 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         // S3 SigV4 enforcement is opt-in: set PICROOM_S3_ACCESS_KEY_ID +
         // PICROOM_S3_SECRET_ACCESS_KEY to require signed S3 requests.
         s3_credentials: read_s3_credentials(),
+        public_url_base: cfg.server.public_url_base.clone(),
+        storage_policy_repo,
     });
 
     // Build router with body size limit.
