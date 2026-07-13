@@ -131,7 +131,7 @@ impl ImageRepository for PgImageRepository {
             WHERE owner_id = $1 AND status != 'deleted'
               AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3::uuid))
             ORDER BY created_at DESC, id DESC
-            LIMIT $3
+            LIMIT $4
             ",
         )
         .bind(owner_id)

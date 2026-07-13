@@ -198,84 +198,132 @@ fn parse_role(s: &str) -> picroom_auth::Role {
 
 async fn run_user_cmd(cmd: picroom_admin::UserCmd) -> anyhow::Result<()> {
     use picroom_admin::user::{
-        user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
+        user_create_pg, user_create_sqlite, user_disable_pg, user_disable_sqlite, user_list_pg,
+        user_list_sqlite, user_set_role_pg, user_set_role_sqlite,
     };
     let url = std::env::var("PICROOM_DATABASE__URL")
         .map_err(|_| anyhow::anyhow!("PICROOM_DATABASE__URL must be set"))?;
     let pool = picroom_admin::user::open_pool(&url).await?;
-    let pool = match pool {
-        picroom_admin::user::AnyPool::Sqlite(p) => p,
-        picroom_admin::user::AnyPool::Pg(_) => {
-            anyhow::bail!("Pg admin commands are not yet wired in the binary")
-        }
-    };
-    match cmd {
-        picroom_admin::UserCmd::Create {
-            email,
-            name,
-            password,
-            role,
-        } => {
-            let _id = user_create_sqlite(&pool, email, name, password, parse_role(&role))
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!("user created");
-            Ok(())
-        }
-        picroom_admin::UserCmd::List => {
-            for (_id, email, role) in user_list_sqlite(&pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-            {
-                println!("{email}\t{role:?}");
+    match pool {
+        picroom_admin::user::AnyPool::Pg(p) => match cmd {
+            picroom_admin::UserCmd::Create {
+                email,
+                name,
+                password,
+                role,
+            } => {
+                let _id = user_create_pg(&p, email, name, password, parse_role(&role))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("user created");
+                Ok(())
             }
-            Ok(())
-        }
-        picroom_admin::UserCmd::SetRole { user_id, role } => {
-            user_set_role_sqlite(&pool, user_id, parse_role(&role))
+            picroom_admin::UserCmd::List => {
+                for (_id, email, role) in
+                    user_list_pg(&p).await.map_err(|e| anyhow::anyhow!("{e}"))?
+                {
+                    println!("{email}\t{role:?}");
+                }
+                Ok(())
+            }
+            picroom_admin::UserCmd::SetRole { user_id, role } => {
+                user_set_role_pg(&p, user_id, parse_role(&role))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+            picroom_admin::UserCmd::Disable { user_id } => user_disable_pg(&p, user_id)
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        }
-        picroom_admin::UserCmd::Disable { user_id } => user_disable_sqlite(&pool, user_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}")),
+                .map_err(|e| anyhow::anyhow!("{e}")),
+        },
+        picroom_admin::user::AnyPool::Sqlite(p) => match cmd {
+            picroom_admin::UserCmd::Create {
+                email,
+                name,
+                password,
+                role,
+            } => {
+                let _id = user_create_sqlite(&p, email, name, password, parse_role(&role))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("user created");
+                Ok(())
+            }
+            picroom_admin::UserCmd::List => {
+                for (_id, email, role) in user_list_sqlite(&p)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                {
+                    println!("{email}\t{role:?}");
+                }
+                Ok(())
+            }
+            picroom_admin::UserCmd::SetRole { user_id, role } => {
+                user_set_role_sqlite(&p, user_id, parse_role(&role))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+            picroom_admin::UserCmd::Disable { user_id } => user_disable_sqlite(&p, user_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}")),
+        },
     }
 }
 
 async fn run_team_cmd(cmd: picroom_admin::TeamCmd) -> anyhow::Result<()> {
-    use picroom_admin::team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite};
+    use picroom_admin::team::{
+        team_add_member_pg, team_add_member_sqlite, team_create_pg, team_create_sqlite,
+        team_list_pg, team_list_sqlite,
+    };
     let url = std::env::var("PICROOM_DATABASE__URL")
         .map_err(|_| anyhow::anyhow!("PICROOM_DATABASE__URL must be set"))?;
     let pool = picroom_admin::user::open_pool(&url).await?;
-    let pool = match pool {
-        picroom_admin::user::AnyPool::Sqlite(p) => p,
-        picroom_admin::user::AnyPool::Pg(_) => {
-            anyhow::bail!("Pg admin commands are not yet wired in the binary")
-        }
-    };
-    match cmd {
-        picroom_admin::TeamCmd::Create { name, slug } => {
-            let _id = team_create_sqlite(&pool, name, slug)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!("team created");
-            Ok(())
-        }
-        picroom_admin::TeamCmd::List => {
-            for t in team_list_sqlite(&pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-            {
-                println!("{}\t{}", t.0, t.1);
+    match pool {
+        picroom_admin::user::AnyPool::Pg(p) => match cmd {
+            picroom_admin::TeamCmd::Create { name, slug } => {
+                let _id = team_create_pg(&p, name, slug)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("team created");
+                Ok(())
             }
-            Ok(())
-        }
-        picroom_admin::TeamCmd::AddMember {
-            team_id,
-            user_id,
-            role,
-        } => team_add_member_sqlite(&pool, team_id, user_id, parse_role(&role))
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}")),
+            picroom_admin::TeamCmd::List => {
+                for t in team_list_pg(&p).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+                    println!("{}\t{}", t.0, t.1);
+                }
+                Ok(())
+            }
+            picroom_admin::TeamCmd::AddMember {
+                team_id,
+                user_id,
+                role,
+            } => team_add_member_pg(&p, team_id, user_id, parse_role(&role))
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}")),
+        },
+        picroom_admin::user::AnyPool::Sqlite(p) => match cmd {
+            picroom_admin::TeamCmd::Create { name, slug } => {
+                let _id = team_create_sqlite(&p, name, slug)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("team created");
+                Ok(())
+            }
+            picroom_admin::TeamCmd::List => {
+                for t in team_list_sqlite(&p)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                {
+                    println!("{}\t{}", t.0, t.1);
+                }
+                Ok(())
+            }
+            picroom_admin::TeamCmd::AddMember {
+                team_id,
+                user_id,
+                role,
+            } => team_add_member_sqlite(&p, team_id, user_id, parse_role(&role))
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}")),
+        },
     }
 }

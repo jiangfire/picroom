@@ -73,6 +73,10 @@ logs/
 # Runtime artifacts (local storage dir created when running the API)
 /data/
 
+# Release artifacts (built distribution archives at repo root)
+/picroom-*-windows-*.zip
+/picroom-*-windows-*/
+
 # Desktop client (Tauri / Vite / Node)
 /desktop/node_modules/
 /desktop/dist/
