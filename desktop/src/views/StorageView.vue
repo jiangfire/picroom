@@ -29,7 +29,7 @@
         </n-form-item>
         <n-form-item label="Config JSON" path="config">
           <n-input
-            v-model:value="configJson"
+            v-model:value="createForm.config"
             type="textarea"
             rows="5"
             placeholder='{}'
@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref } from "vue";
 import {
   NButton,
   NCheckbox,
@@ -76,13 +76,12 @@ const loading = ref(false);
 const creating = ref(false);
 const showCreateModal = ref(false);
 const createFormRef = ref<any>(null);
-const createForm = ref<StoragePolicy>({
+const createForm = ref({
   name: "",
   driver: "local",
-  config: {},
+  config: "{}",
   is_default: false,
 });
-const configJson = ref("{}");
 
 const driverOptions = [
   { label: "Local", value: "local" },
@@ -139,14 +138,6 @@ const columns: DataTableColumns<StoragePolicy> = [
   },
 ];
 
-watch(configJson, (value) => {
-  try {
-    createForm.value.config = JSON.parse(value);
-  } catch {
-    // Invalid JSON is caught by validation.
-  }
-});
-
 async function refresh() {
   loading.value = true;
   try {
@@ -170,13 +161,12 @@ async function submitCreate() {
     await storageApi.createPolicy({
       name: createForm.value.name,
       driver: createForm.value.driver,
-      config: createForm.value.config,
+      config: JSON.parse(createForm.value.config),
       is_default: createForm.value.is_default,
     });
     message.success("Policy created");
     showCreateModal.value = false;
-    createForm.value = { name: "", driver: "local", config: {}, is_default: false };
-    configJson.value = "{}";
+    createForm.value = { name: "", driver: "local", config: "{}", is_default: false };
     await refresh();
   } catch (e) {
     message.error(String(e));

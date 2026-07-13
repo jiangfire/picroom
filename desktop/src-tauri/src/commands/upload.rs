@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(result["id"], "img-789");
         assert_eq!(result["content_type"], "image/png");
 
-        let events = sink.0.lock().unwrap();
+        let events = sink.0.lock().unwrap().clone();
         let progress_events: Vec<_> = events.iter().filter(|e| e.kind == "progress").collect();
         assert!(!progress_events.is_empty());
         assert_eq!(events.last().unwrap().kind, "done");

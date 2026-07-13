@@ -153,7 +153,7 @@ async function download(id: string) {
     return;
   }
   try {
-    await invoke("download_image", { imageId: id, savePath });
+    await invoke("download_image", { image_id: id, save_path: savePath });
     message.success("Image downloaded");
   } catch (e) {
     message.error(String(e));
@@ -199,9 +199,9 @@ async function uploadFile(path: string) {
 
   try {
     await invoke("upload_file", {
-      filePath: path,
-      teamId: undefined,
-      onProgress: channel,
+      file_path: path,
+      team_id: undefined,
+      on_progress: channel,
     });
     await refresh();
   } catch (e) {
