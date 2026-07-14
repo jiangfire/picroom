@@ -58,9 +58,9 @@ SELECT timestamp, actor_label, action, target_type, target_id
 FROM audit_events ORDER BY timestamp DESC LIMIT 50;
 ```
 
-`admin audit tail` exists but is not yet wired to read from the DB — it
-returns an explicit "not implemented" error rather than a misleading empty
-list.
+`admin audit tail` reads the `audit_events` table for both PostgreSQL and
+SQLite (see `admin/src/audit_cmd.rs`); pass `--follow` to stream new events
+as they arrive. An optional `--actor <email>` filters by actor label.
 
 ## 5. Backup & restore
 

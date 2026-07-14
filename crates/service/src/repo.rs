@@ -742,3 +742,59 @@ impl StoragePolicyRepository for PgStoragePolicyRepository {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    #[test]
+    fn none_cursor_decodes_to_empty_parts() {
+        assert_eq!(parse_composite_cursor(None).unwrap(), (None, None));
+    }
+
+    #[test]
+    fn cursor_round_trips_through_format_and_parse() {
+        let ts = OffsetDateTime::now_utc();
+        let id = Uuid::now_v7();
+        let encoded = format_cursor(ts, id).unwrap();
+        let (got_ts, got_id) = parse_composite_cursor(Some(&encoded)).unwrap();
+        assert_eq!(got_ts, Some(ts));
+        assert_eq!(got_id, Some(id));
+    }
+
+    #[test]
+    fn cursor_without_separator_is_invalid() {
+        let err = parse_composite_cursor(Some("no-separator-here")).unwrap_err();
+        assert!(format!("{err}").contains("invalid cursor"));
+    }
+
+    #[test]
+    fn cursor_with_bad_timestamp_is_invalid() {
+        let id = Uuid::now_v7();
+        let bad = format!("not-a-timestamp|{id}");
+        let err = parse_composite_cursor(Some(&bad)).unwrap_err();
+        assert!(format!("{err}").contains("invalid cursor ts"));
+    }
+
+    #[test]
+    fn cursor_with_bad_uuid_is_invalid() {
+        let ts = OffsetDateTime::now_utc();
+        let ts_str = ts
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let bad = format!("{ts_str}|not-a-uuid");
+        let err = parse_composite_cursor(Some(&bad)).unwrap_err();
+        assert!(format!("{err}").contains("invalid cursor id"));
+    }
+
+    #[test]
+    fn format_cursor_uses_rfc3339_pipe_encoding() {
+        let ts = OffsetDateTime::UNIX_EPOCH;
+        let id = Uuid::nil();
+        let encoded = format_cursor(ts, id).unwrap();
+        assert!(encoded.starts_with("1970-01-01T00:00:00"));
+        assert!(encoded.ends_with("|00000000-0000-0000-0000-000000000000"));
+    }
+}

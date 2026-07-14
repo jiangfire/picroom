@@ -33,8 +33,11 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         { Arc::new(picroom_api::StorageWriterFromArc(deps.storage.clone())) };
 
     // Per-user quota enforcement — backed by PostgreSQL; unlimited on SQLite.
+    // The default cap mirrors `QuotaConfig::default_user_bytes` so the
+    // operator-tunable default is honored (not the hardcoded `DEFAULT_QUOTA`).
     let quota = match &deps.db {
-        Some(DatabaseHandle::Pg(pool)) => picroom_service::QuotaService::with_pool(pool.clone()),
+        Some(DatabaseHandle::Pg(pool)) => picroom_service::QuotaService::with_pool(pool.clone())
+            .with_default_quota(cfg.quota.default_user_bytes),
         _ => picroom_service::QuotaService::new(),
     };
 

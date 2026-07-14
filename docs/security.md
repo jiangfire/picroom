@@ -84,10 +84,10 @@ These are documented gaps, not silent failures:
 
 | Area | Status |
 |---|---|
-| **Quota enforcement** | `QuotaService` is a deferred stub — `remaining_*` returns `u64::MAX`, `charge_*` is a no-op. Per-user/team byte caps are **not** enforced. Set external limits (reverse proxy, bucket quotas) until implemented. |
-| **DeleteService** | The HTTP `DELETE` handler performs real deletion (storage + DB row); `DeleteService` as a unit only emits audit and is not used by the live path. |
+| **Quota enforcement** | Enforced in production. The PG-backed `QuotaService` (wired in `bin/picroom/src/api_cmd.rs`) rejects uploads once `remaining_user` drops below the payload size. `remaining_user` = `quotas.max_bytes` − `SUM(bytes)` over non-deleted `images`, defaulting to `QuotaConfig.default_user_bytes` (10 GiB). Team-level quotas are still unlimited. `charge_user` remains a no-op because usage is computed live from the `images` table. |
+| **DeleteService** | Wired. The HTTP `DELETE` handler routes through the unified `DeleteService` (storage removal + DB soft-delete + audit event). |
 | **OIDC / SSO** | Not implemented (`501`). |
-| **`admin audit tail`** | Returns an explicit "not implemented" error (events are still recorded via `DbAuditSink`). |
+| **`admin audit tail`** | Implemented — reads `audit_events` for both PostgreSQL and SQLite (`admin/src/audit_cmd.rs`); `--follow` streams new events. |
 | **Rate limiting** | Not implemented at the application layer; rely on the reverse proxy. |
 
 ## 7. Vulnerability & license policy

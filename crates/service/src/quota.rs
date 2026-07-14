@@ -24,17 +24,34 @@ pub const DEFAULT_QUOTA: u64 = 1024 * 1024 * 1024;
 pub struct QuotaService {
     /// `PostgreSQL` pool. `None` ⇒ unlimited quota (no enforcement).
     pool: Option<PgPool>,
+    /// Cap applied when a user has no explicit `quotas` row. Defaults to
+    /// [`DEFAULT_QUOTA`] but is overridden from `QuotaConfig` in the binary
+    /// wiring so the operator-tunable default is honored.
+    default_quota: u64,
 }
 
 impl QuotaService {
     /// Creates a quota service with no database — reports unlimited quota.
     pub const fn new() -> Self {
-        Self { pool: None }
+        Self {
+            pool: None,
+            default_quota: DEFAULT_QUOTA,
+        }
     }
 
     /// Creates a quota service backed by a `PostgreSQL` pool.
     pub const fn with_pool(pool: PgPool) -> Self {
-        Self { pool: Some(pool) }
+        Self {
+            pool: Some(pool),
+            default_quota: DEFAULT_QUOTA,
+        }
+    }
+
+    /// Overrides the default per-user cap used when no `quotas` row exists for
+    /// the user. Mirrors `QuotaConfig::default_user_bytes`.
+    pub const fn with_default_quota(mut self, bytes: u64) -> Self {
+        self.default_quota = bytes;
+        self
     }
 
     /// Returns remaining bytes for the user.
@@ -56,7 +73,7 @@ impl QuotaService {
                     ",
                 )
                 .bind(user_id)
-                .bind(DEFAULT_QUOTA as i64)
+                .bind(self.default_quota as i64)
                 .fetch_one(pool)
                 .await
                 .map_err(|e| ServiceError::Internal(format!("quota query: {e}")))?;

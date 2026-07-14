@@ -78,3 +78,44 @@ impl Cache for InMemoryCache {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn set_then_get_returns_stored_value() {
+        let cache = InMemoryCache::new();
+        cache.set("k", b"v".to_vec(), Duration::from_secs(60)).await.unwrap();
+        assert_eq!(cache.get("k").await.unwrap(), b"v");
+    }
+
+    #[tokio::test]
+    async fn get_missing_key_is_miss() {
+        let cache = InMemoryCache::new();
+        assert!(matches!(cache.get("nope").await, Err(CacheError::Miss)));
+    }
+
+    #[tokio::test]
+    async fn entry_expires_after_ttl() {
+        let cache = InMemoryCache::new();
+        cache
+            .set("k", b"v".to_vec(), Duration::from_millis(20))
+            .await
+            .unwrap();
+        // Immediately readable.
+        assert_eq!(cache.get("k").await.unwrap(), b"v");
+        // After the TTL elapses it is a miss.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(matches!(cache.get("k").await, Err(CacheError::Miss)));
+    }
+
+    #[tokio::test]
+    async fn delete_removes_entry() {
+        let cache = InMemoryCache::new();
+        cache.set("k", b"v".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache.delete("k").await.unwrap();
+        assert!(matches!(cache.get("k").await, Err(CacheError::Miss)));
+    }
+}
