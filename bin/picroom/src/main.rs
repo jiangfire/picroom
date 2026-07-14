@@ -136,8 +136,36 @@ async fn main() -> ExitCode {
                     Err(e) => Err(anyhow::anyhow!("open db: {e}")),
                 }
             }
-            MigrateAction::Revert | MigrateAction::Status => Err(anyhow::anyhow!(
-                "migrate {action:?} not implemented in skeleton"
+            MigrateAction::Status => {
+                let path = cli.config.as_deref();
+                match open_db(path).await {
+                    Ok(db) => match picroom_admin::migrate_status(&db).await {
+                        Ok(report) => {
+                            for k in &report.applied {
+                                println!("applied  {:>4}  {}", k.version, k.description);
+                            }
+                            for k in &report.pending {
+                                println!("pending  {:>4}  {}", k.version, k.description);
+                            }
+                            for f in &report.failed {
+                                println!(
+                                    "FAILED   {:>4}  {} ({})",
+                                    f.version, f.description, f.installed_on
+                                );
+                            }
+                            if report.pending.is_empty() && report.failed.is_empty() {
+                                println!("database is up to date");
+                            }
+                            Ok(())
+                        }
+                        Err(e) => Err(anyhow::anyhow!("{e}")),
+                    },
+                    Err(e) => Err(anyhow::anyhow!("open db: {e}")),
+                }
+            }
+            MigrateAction::Revert => Err(anyhow::anyhow!(
+                "migrate revert is not supported: no down-migrations are shipped \
+                 (only forward migrations exist)"
             )),
         },
         Command::Admin(AdminCmd::User(cmd)) => {

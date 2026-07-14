@@ -16,7 +16,7 @@ pub mod user;
 
 pub use audit_cmd::audit_tail;
 pub use config_cmd::{config_print, config_validate};
-pub use migrate::migrate_run;
+pub use migrate::{migrate_run, migrate_status};
 pub use storage_test::storage_test;
 pub use team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite, TeamCmd};
 pub use user::{
