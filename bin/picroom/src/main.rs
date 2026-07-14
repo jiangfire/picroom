@@ -192,8 +192,22 @@ async fn main() -> ExitCode {
             }
         },
         Command::Admin(AdminCmd::StorageTest { policy: _ }) => {
-            // Placeholder: real impl reads storage config and constructs driver.
-            Err(anyhow::anyhow!("storage test not implemented in skeleton"))
+            let cfg = picroom_infra::load_config_from(cli.config.as_deref())
+                .map_err(|e| anyhow::anyhow!("config: {e}"));
+            match cfg {
+                Ok(c) => {
+                    let driver = crate::app::build_storage(&c)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"));
+                    match driver {
+                        Ok(d) => picroom_admin::storage_test(d.as_ref())
+                            .await
+                            .map_err(|e| anyhow::anyhow!("{e}")),
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e),
+            }
         }
     };
 
