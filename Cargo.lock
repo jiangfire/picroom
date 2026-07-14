@@ -2468,6 +2468,7 @@ dependencies = [
  "pretty_assertions",
  "proptest",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "time",
  "uuid",
@@ -2543,6 +2544,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "url",
  "uuid",
 ]
 
