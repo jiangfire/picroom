@@ -498,14 +498,15 @@ impl StorageReader for S3Driver {
 impl StorageLister for S3Driver {
     async fn list(
         &self,
-        prefix: &StorageKey,
+        prefix: Option<&StorageKey>,
     ) -> Result<picroom_domain::Page<ObjectMeta>, StorageError> {
         // Use S3 ListObjectsV2.
         let mut url = self.base_url.clone();
         url.set_path(&format!("/{}/", self.config.bucket));
-        url.query_pairs_mut()
-            .append_pair("list-type", "2")
-            .append_pair("prefix", prefix.as_str());
+        url.query_pairs_mut().append_pair("list-type", "2");
+        if let Some(p) = prefix {
+            url.query_pairs_mut().append_pair("prefix", p.as_str());
+        }
         // Path-style on the bucket — adjust to a bucket-scoped URL.
         let headers = self.sign_request("GET", &url, &[], &[]);
         let mut req = self.http.get(url);

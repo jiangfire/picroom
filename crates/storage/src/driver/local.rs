@@ -165,9 +165,13 @@ impl StorageWriter for LocalDriver {
 impl StorageLister for LocalDriver {
     async fn list(
         &self,
-        prefix: &StorageKey,
+        prefix: Option<&StorageKey>,
     ) -> Result<picroom_domain::Page<crate::driver::ObjectMeta>, StorageError> {
-        let base = self.resolve_unchecked(prefix)?;
+        let base = match prefix {
+            Some(p) => self.resolve_unchecked(p)?,
+            // No prefix → list the whole backing store.
+            None => self.root.clone(),
+        };
         if !fs::try_exists(&base).await.unwrap_or(false) {
             return Ok(picroom_domain::Page::new(
                 vec![],
@@ -195,10 +199,10 @@ impl StorageLister for LocalDriver {
 async fn collect_recursive(
     base: &Path,
     root: &Path,
-    prefix: &StorageKey,
+    prefix: Option<&StorageKey>,
     items: &mut Vec<crate::driver::ObjectMeta>,
 ) -> Result<(), StorageError> {
-    let prefix_str = prefix.as_str();
+    let prefix_str = prefix.map_or("", StorageKey::as_str);
     let mut stack = vec![base.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let mut rd = match fs::read_dir(&dir).await {

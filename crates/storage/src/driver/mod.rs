@@ -58,8 +58,11 @@ pub trait StorageWriter: Send + Sync {
 /// Listing operations on a storage backend.
 #[async_trait::async_trait]
 pub trait StorageLister: Send + Sync {
-    /// Lists objects with the given prefix, returning a page of metadata.
-    async fn list(&self, prefix: &StorageKey) -> Result<Page<ObjectMeta>, StorageError>;
+    /// Lists objects, returning a page of metadata.
+    ///
+    /// `prefix` filters by key prefix. `None` lists every object in the
+    /// backend (no prefix restriction).
+    async fn list(&self, prefix: Option<&StorageKey>) -> Result<Page<ObjectMeta>, StorageError>;
 }
 
 /// URL signing for cloud backends.

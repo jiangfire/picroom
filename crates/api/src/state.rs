@@ -207,7 +207,7 @@ impl<S: Storage + ?Sized + Send + Sync> StorageReader for StorageWriterFromArc<S
 impl<S: Storage + ?Sized + Send + Sync> StorageLister for StorageWriterFromArc<S> {
     async fn list(
         &self,
-        prefix: &picroom_domain::StorageKey,
+        prefix: Option<&picroom_domain::StorageKey>,
     ) -> Result<_Page<ObjectMeta>, picroom_storage::StorageError> {
         self.0.list(prefix).await
     }

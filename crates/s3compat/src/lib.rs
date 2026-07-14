@@ -148,7 +148,7 @@ pub(crate) mod test_util {
 
     #[async_trait]
     impl StorageLister for MockStorage {
-        async fn list(&self, _prefix: &StorageKey) -> Result<Page<ObjectMeta>, StorageError> {
+        async fn list(&self, _prefix: Option<&StorageKey>) -> Result<Page<ObjectMeta>, StorageError> {
             if self.failing() {
                 return Err(mock_err());
             }

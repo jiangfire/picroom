@@ -69,7 +69,7 @@ impl StorageWriter for AnyStorage {
 
 #[async_trait]
 impl StorageLister for AnyStorage {
-    async fn list(&self, prefix: &StorageKey) -> Result<Page<ObjectMeta>, StorageError> {
+    async fn list(&self, prefix: Option<&StorageKey>) -> Result<Page<ObjectMeta>, StorageError> {
         match self {
             Self::Local(d) => d.list(prefix).await,
             Self::S3(d) => d.list(prefix).await,
