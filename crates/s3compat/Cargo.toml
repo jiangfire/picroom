@@ -38,3 +38,4 @@ uuid = { workspace = true }
 tokio = { workspace = true }
 mockall = { workspace = true }
 pretty_assertions = { workspace = true }
+url = { workspace = true }

@@ -76,3 +76,58 @@ pub async fn abort_multipart<S: S3State>(
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::TestState;
+    use axum::body::to_bytes;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use std::sync::Arc;
+
+    fn state() -> Arc<TestState> {
+        Arc::new(TestState::new())
+    }
+
+    async fn body_string(response: Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[test]
+    fn not_implemented_xml_includes_bucket_and_key() {
+        let xml = not_implemented_xml("buck", "key.jpg");
+        assert!(xml.contains("<Bucket>buck</Bucket>"));
+        assert!(xml.contains("<Key>key.jpg</Key>"));
+        assert!(xml.contains("NotImplemented"));
+        assert!(xml.contains("use a single PUT"));
+    }
+
+    #[tokio::test]
+    async fn create_multipart_is_501() {
+        let resp = create_multipart(State(state()), Path(("b".into(), "k".into()))).await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(body_string(resp).await.contains("<Bucket>b</Bucket>"));
+    }
+
+    #[tokio::test]
+    async fn upload_part_is_501() {
+        let resp = upload_part(State(state()), Path(("b".into(), "k".into()))).await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn complete_multipart_is_501() {
+        let resp = complete_multipart(State(state()), Path(("b".into(), "k".into()))).await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn abort_multipart_is_501() {
+        let resp = abort_multipart(State(state()), Path(("b".into(), "k".into()))).await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+}
