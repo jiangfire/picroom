@@ -105,6 +105,9 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         s3_credentials: read_s3_credentials(),
         public_url_base: cfg.server.public_url_base.clone(),
         storage_policy_repo,
+        oidc_providers: Arc::new(cfg.auth.oidc.providers.clone()),
+        oidc_admin_emails: Arc::new(cfg.auth.oidc.admin_emails.clone().into_iter().collect()),
+        cookie_secure: cfg.auth.oidc.secure_cookies,
     });
 
     // Build router with body size limit.

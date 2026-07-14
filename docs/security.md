@@ -15,8 +15,14 @@ before exposing the service to untrusted networks.
   rejected with `401` at the gate.
 - `GET /healthz`, `/readyz`, `/metrics`, and `/auth/*` are public. Everything
   else under `/api/v1/*` requires a valid bearer token.
-- **OIDC** (`/auth/oidc/:provider/callback`) is unimplemented (returns `501`)
-  and the routes are not mounted. Password login is the only auth path today.
+- **OIDC / SSO** is implemented. `GET /api/v1/auth/oidc/:provider/login` starts the
+  flow (redirects to the IdP after issuing an `HttpOnly` `state` cookie) and
+  `GET /api/v1/auth/oidc/:provider/callback` completes it: the `state` cookie is
+  verified for CSRF, the `code` is exchanged, and the id_token signature is verified
+  against the provider's published **JWKS** (RS256/ES256). The id_token `nonce` is
+  bound to the `state` cookie. Accounts are auto-provisioned as `viewer`, or `admin`
+  when the email is in `auth.oidc.admin_emails`. Unknown providers return `404`;
+  unverified tokens are rejected with `400`. Password login remains available.
 
 **Required in production:** `PICROOM_AUTH__JWT_SECRET` must be changed from the
 default `change-me`. Release builds of both `api` and `worker` refuse to start
@@ -86,7 +92,7 @@ These are documented gaps, not silent failures:
 |---|---|
 | **Quota enforcement** | Enforced in production. The PG-backed `QuotaService` (wired in `bin/picroom/src/api_cmd.rs`) rejects uploads once `remaining_user` drops below the payload size. `remaining_user` = `quotas.max_bytes` − `SUM(bytes)` over non-deleted `images`, defaulting to `QuotaConfig.default_user_bytes` (10 GiB). Team-level quotas are still unlimited. `charge_user` remains a no-op because usage is computed live from the `images` table. |
 | **DeleteService** | Wired. The HTTP `DELETE` handler routes through the unified `DeleteService` (storage removal + DB soft-delete + audit event). |
-| **OIDC / SSO** | Not implemented (`501`). |
+| **OIDC / SSO** | Implemented — `GET /auth/oidc/:provider/{login,callback}`; id_token verified against the provider JWKS (RS256/ES256), `state`+`nonce` CSRF binding, accounts auto-provisioned as `viewer` (or `admin` via `auth.oidc.admin_emails` allowlist). |
 | **`admin audit tail`** | Implemented — reads `audit_events` for both PostgreSQL and SQLite (`admin/src/audit_cmd.rs`); `--follow` streams new events. |
 | **Rate limiting** | Not implemented at the application layer; rely on the reverse proxy. |
 

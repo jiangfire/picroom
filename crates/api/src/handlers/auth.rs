@@ -5,14 +5,22 @@
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::Json;
-use picroom_auth::PasswordHasher;
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use picroom_auth::{
+    verify_id_token, HttpOidcClient, OidcClient, OidcError, OidcProvider, OidcUserInfo,
+};
+use picroom_infra::config::OidcProviderConfig;
+use picroom_domain::NewOidcUser;
 use serde::Deserialize;
-use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
+
+/// Cookie used to carry the OIDC `state`/`nonce` binding across the redirect.
+const OIDC_STATE_COOKIE: &str = "oidc_state";
 
 /// `POST /api/v1/auth/login`
 ///
@@ -44,7 +52,7 @@ pub async fn login(
     }
 
     // Verify the password against the stored Argon2id hash.
-    let password_ok = PasswordHasher::new()
+    let password_ok = picroom_auth::PasswordHasher::new()
         .verify(&body.password, &creds.password_hash)
         .map_err(|e| ApiError::internal(format!("verify: {e}")))?;
     if !password_ok {
@@ -58,10 +66,10 @@ pub async fn login(
         .issue_with_scopes(creds.id.to_string(), &scopes)
         .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
 
-    Ok(Json(json!({
+    Ok(Json(serde_json::json!({
         "access_token": token,
         "token_type": "Bearer",
-        "expires_in": 3600,
+        "expires_in": state.jwt.ttl_secs(),
     })))
 }
 
@@ -79,19 +87,238 @@ pub async fn logout() -> impl IntoResponse {
     StatusCode::NO_CONTENT
 }
 
-/// `POST /api/v1/auth/oidc/:provider/login`
-pub async fn oidc_login() -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
+/// `GET /api/v1/auth/oidc/:provider/login`
+///
+/// Begins the OIDC flow: discovers the provider, builds the authorization URL
+/// with a fresh `state`+`nonce`, stores the binding in a short-lived `HttpOnly`
+/// cookie, and redirects the browser to the `IdP`.
+pub async fn oidc_login(
+    State(state): State<Arc<AppState>>,
+    Path(provider): Path<String>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let cfg = state
+        .oidc_providers
+        .get(&provider)
+        .ok_or_else(|| ApiError::not_found(format!("unknown oidc provider: {provider}")))?;
+
+    let client = build_client(cfg)
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc discover: {e}")))?;
+
+    let state_val = random_binding();
+    let nonce = random_binding();
+    let auth_url = client
+        .authorization_url(&state_val, &nonce)
+        .map_err(|e| ApiError::internal(format!("oidc auth url: {e}")))?;
+
+    let cookie_token = state
+        .jwt
+        .issue_oidc_state(&state_val, &nonce)
+        .map_err(|e| ApiError::internal(format!("oidc state: {e}")))?;
+
+    let cookie = Cookie::build(Cookie::new(OIDC_STATE_COOKIE, cookie_token))
+        .http_only(true)
+        .secure(state.cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(time::Duration::seconds(600))
+        .build();
+    let jar = jar.add(cookie);
+
+    // `(CookieJar, Redirect)` carries both the Set-Cookie header and the 302.
+    Ok((jar, Redirect::to(&auth_url)))
 }
 
 /// `GET /api/v1/auth/oidc/:provider/callback`
-pub async fn oidc_callback() -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
+///
+/// Completes the OIDC flow: validates the `state` cookie (CSRF), exchanges the
+/// code for tokens, verifies the `id_token` (JWKS), finds-or-creates the local
+/// account, issues a Bearer JWT, and redirects to the SPA with the token in
+/// the URL fragment.
+pub async fn oidc_callback(
+    State(state): State<Arc<AppState>>,
+    Path(provider): Path<String>,
+    Query(params): Query<OidcCallbackQuery>,
+    jar: CookieJar,
+) -> Result<impl IntoResponse, ApiError> {
+    let cfg = state
+        .oidc_providers
+        .get(&provider)
+        .ok_or_else(|| ApiError::not_found(format!("unknown oidc provider: {provider}")))?;
+
+    // 1. Validate the state cookie (CSRF protection).
+    let cookie_token = jar
+        .get(OIDC_STATE_COOKIE)
+        .map(|c| c.value().to_string())
+        .ok_or_else(|| ApiError::bad_request("missing oidc state cookie"))?;
+    let (cookie_state, nonce) = state
+        .jwt
+        .verify_oidc_state(&cookie_token)
+        .map_err(|_| ApiError::bad_request("invalid oidc state cookie"))?;
+    if cookie_state != params.state {
+        return Err(ApiError::bad_request("oidc state mismatch"));
+    }
+
+    // 2. Exchange the authorization code for tokens.
+    let client = build_client(cfg)
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc discover: {e}")))?;
+    let tokens = client
+        .exchange_code(&params.code)
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc token exchange: {e}")))?;
+
+    // 3. Verify the id_token signature + claims (and bind the nonce).
+    let claims = verify_id_token(&client, &tokens.id_token, Some(&nonce))
+        .map_err(|e| ApiError::bad_request(format!("oidc id_token: {e}")))?;
+
+    // 4. Prefer fresh userinfo; fall back to id_token claims.
+    let (email, name, avatar) = resolve_identity(&client, &tokens.access_token, &claims).await;
+    let email = email.ok_or_else(|| ApiError::bad_request("oidc provider returned no email"))?;
+
+    // 5. Find-or-create the local account linked to this identity.
+    let user_repo = state
+        .user_repo
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("user repository not configured"))?;
+    let user = if let Some(u) = user_repo
+        .find_by_external(&provider, &claims.sub)
+        .await
+        .map_err(|e| ApiError::internal(format!("oidc lookup: {e}")))?
+    {
+        u
+    } else {
+        let role = provision_role(&email, state.oidc_admin_emails.as_ref());
+        let new = NewOidcUser {
+            email: email.clone(),
+            name: name.unwrap_or_else(|| email.clone()),
+            avatar_url: avatar,
+            provider: provider.clone(),
+            subject: claims.sub.clone(),
+            email_verified: claims.email_verified.unwrap_or(false),
+            role,
+        };
+        user_repo
+            .create_oidc_user(&new)
+            .await
+            .map_err(|e| ApiError::internal(format!("oidc create: {e}")))?
+    };
+
+    if user.disabled {
+        return Err(ApiError::unauthorized("account disabled"));
+    }
+
+    // 6. Issue a Bearer JWT and redirect to the SPA with it in the fragment.
+    let token = state
+        .jwt
+        .issue_with_scopes(user.id.to_string(), std::slice::from_ref(&user.role))
+        .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
+
+    let base = state
+        .public_url_base
+        .clone()
+        .unwrap_or_else(|| "/".to_string());
+    let location = format!(
+        "{base}#access_token={token}&token_type=Bearer&expires_in={}",
+        state.jwt.ttl_secs()
+    );
+
+    // Clear the state cookie.
+    let clear = Cookie::build(Cookie::new(OIDC_STATE_COOKIE, ""))
+        .http_only(true)
+        .secure(state.cookie_secure)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(time::Duration::ZERO)
+        .build();
+    let jar = jar.add(clear);
+
+    Ok((jar, Redirect::to(&location)))
 }
 
-impl ApiError {
-    /// Convenience constructor for 501 placeholder errors.
-    pub fn not_implemented(_feature: &'static str) -> Self {
-        Self::new(StatusCode::NOT_IMPLEMENTED, "not_implemented", "skeleton")
+/// Query parameters for the OIDC callback.
+#[derive(Debug, Deserialize)]
+pub struct OidcCallbackQuery {
+    /// Authorization code.
+    pub code: String,
+    /// CSRF state echoed by the provider.
+    pub state: String,
+}
+
+/// Builds an [`HttpOidcClient`] from provider configuration.
+async fn build_client(cfg: &OidcProviderConfig) -> Result<HttpOidcClient, OidcError> {
+    let provider = OidcProvider {
+        name: String::new(),
+        issuer: cfg.issuer.clone(),
+        client_id: cfg.client_id.clone(),
+        client_secret: cfg.client_secret.clone(),
+        redirect_uri: cfg.redirect_uri.clone(),
+        scopes: cfg.scopes.clone(),
+        insecure_skip_verify: cfg.insecure_skip_verify,
+    };
+    let mut client = HttpOidcClient::discover(provider).await?;
+    if cfg.insecure_skip_verify {
+        client = client.with_insecure_skip_verify();
+    }
+    Ok(client)
+}
+
+/// Resolves the user's email/name/avatar from userinfo, falling back to the
+/// `id_token` claims when userinfo is unavailable.
+async fn resolve_identity(
+    client: &HttpOidcClient,
+    access_token: &str,
+    claims: &picroom_auth::IdTokenClaims,
+) -> (Option<String>, Option<String>, Option<String>) {
+    match client.userinfo(access_token).await {
+        Ok(OidcUserInfo {
+            sub: _,
+            email,
+            name,
+            picture,
+        }) => (
+            email.or_else(|| claims.email.clone()),
+            name.or_else(|| claims.name.clone()),
+            picture,
+        ),
+        Err(_) => (claims.email.clone(), claims.name.clone(), None),
+    }
+}
+
+/// Decides the role for a newly-provisioned OIDC account: `admin` if the email
+/// is on the allowlist, otherwise `viewer`.
+pub fn provision_role<S: std::hash::BuildHasher>(
+    email: &str,
+    admin_emails: &HashSet<String, S>,
+) -> String {
+    if admin_emails.contains(email) {
+        "admin".to_string()
+    } else {
+        "viewer".to_string()
+    }
+}
+
+/// Generates a random, unguessable `state`/`nonce` value.
+fn random_binding() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provision_role_grants_admin_for_allowlisted_email() {
+        let admins: HashSet<String> = HashSet::from(["boss@example.com".to_string()]);
+        assert_eq!(provision_role("boss@example.com", &admins), "admin");
+        assert_eq!(provision_role("someone@example.com", &admins), "viewer");
+    }
+
+    #[test]
+    fn provision_role_is_case_sensitive_on_email() {
+        let admins: HashSet<String> = HashSet::from(["Boss@example.com".to_string()]);
+        // A differently-cased email must NOT be promoted to admin.
+        assert_eq!(provision_role("boss@example.com", &admins), "viewer");
     }
 }

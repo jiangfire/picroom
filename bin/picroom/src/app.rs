@@ -177,7 +177,7 @@ async fn try_sqlite_connect(url: &str) -> Result<sqlx::SqlitePool, sqlx::Error> 
 
 /// Constructs the storage driver from config.
 /// Uses S3/MinIO if env vars are set, otherwise falls back to `LocalDriver`.
-pub(crate) async fn build_storage(_cfg: &picroom_infra::Config) -> Result<Arc<dyn Storage>> {
+pub async fn build_storage(_cfg: &picroom_infra::Config) -> Result<Arc<dyn Storage>> {
     // Try S3/MinIO from env vars (docker-compose sets these).
     if let Some(s3_cfg) = parse_s3_config_from_env() {
         tracing::info!(

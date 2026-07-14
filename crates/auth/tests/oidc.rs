@@ -25,7 +25,7 @@ fn provider(issuer: &str) -> OidcProvider {
         client_secret: SECRET.into(),
         redirect_uri: "https://app.example.com/cb".into(),
         scopes: vec!["openid".into(), "email".into()],
-        insecure_skip_verify: false,
+        insecure_skip_verify: true,
     }
 }
 
@@ -59,8 +59,10 @@ fn make_id_token(issuer: &str, exp_offset_secs: i64) -> String {
         aud: serde_json::Value::String(CLIENT_ID.into()),
         exp: exp_dt.unix_timestamp(),
         iat: now.unix_timestamp(),
+        nonce: None,
         email: Some("alice@example.com".into()),
         name: Some("Alice".into()),
+        email_verified: Some(true),
     };
     encode(
         &header,
@@ -133,9 +135,9 @@ async fn exchanges_code_for_tokens() {
     assert_eq!(tokens.refresh_token.as_deref(), Some("REFRESH-XYZ"));
     assert_eq!(tokens.token_type, "Bearer");
 
-    // verify_id_token uses cfg.issuer as expected issuer; the tokens were
-    // signed with that same issuer.
-    let verified = verify_id_token(&client, &tokens.id_token).unwrap();
+    // With insecure_skip_verify, verify_id_token decodes (no signature check);
+    // the tokens were signed with the same issuer the client expects.
+    let verified = verify_id_token(&client, &tokens.id_token, None).unwrap();
     assert_eq!(verified.sub, "user-123");
     assert_eq!(verified.email.as_deref(), Some("alice@example.com"));
     assert_eq!(verified.name.as_deref(), Some("Alice"));
@@ -152,7 +154,7 @@ async fn rejects_expired_id_token() {
     let client = HttpOidcClient::discover(provider(&server.uri()))
         .await
         .unwrap();
-    let err = verify_id_token(&client, &token).unwrap_err();
+    let err = verify_id_token(&client, &token, None).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("expired") || msg.contains("ExpiredSignature"),

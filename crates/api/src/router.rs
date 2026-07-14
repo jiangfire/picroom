@@ -23,6 +23,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Auth (open)
         .route("/api/v1/auth/login", post(super::handlers::auth::login))
         .route("/api/v1/auth/logout", post(super::handlers::auth::logout))
+        .route(
+            "/api/v1/auth/oidc/:provider/login",
+            get(super::handlers::auth::oidc_login),
+        )
+        .route(
+            "/api/v1/auth/oidc/:provider/callback",
+            get(super::handlers::auth::oidc_callback),
+        )
         // API v1 (requires auth middleware)
         .route(
             "/api/v1/images",

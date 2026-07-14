@@ -17,6 +17,8 @@ use picroom_service::QuotaService;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
+use picroom_infra::config::OidcProviderConfig;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
@@ -56,6 +58,12 @@ pub struct AppState {
     /// Public base URL for image links (e.g. `"https://cdn.example.com"`).
     /// When `None`, the link handler emits a path-relative `/i/{key}` URL.
     pub public_url_base: Option<String>,
+    /// OIDC provider configurations, keyed by provider name (e.g. `"google"`).
+    pub oidc_providers: Arc<HashMap<String, OidcProviderConfig>>,
+    /// Emails promoted to `admin` on first OIDC login.
+    pub oidc_admin_emails: Arc<HashSet<String>>,
+    /// Whether OIDC state cookies are marked `Secure` (false for local HTTP dev).
+    pub cookie_secure: bool,
 }
 
 impl JwtProvider for AppState {
@@ -101,6 +109,9 @@ impl AppState {
             s3_credentials: None,
             public_url_base: None,
             storage_policy_repo: None,
+            oidc_providers: Arc::new(HashMap::new()),
+            oidc_admin_emails: Arc::new(HashSet::new()),
+            cookie_secure: false,
         }
     }
 
@@ -144,6 +155,20 @@ impl AppState {
                 quota: self.upload.quota.clone(),
             });
         }
+        self
+    }
+
+    /// Attaches OIDC provider configuration and the admin-email allowlist.
+    #[must_use]
+    pub fn with_oidc(
+        mut self,
+        providers: HashMap<String, OidcProviderConfig>,
+        admin_emails: Vec<String>,
+        secure_cookies: bool,
+    ) -> Self {
+        self.oidc_providers = Arc::new(providers);
+        self.oidc_admin_emails = Arc::new(admin_emails.into_iter().collect());
+        self.cookie_secure = secure_cookies;
         self
     }
 }

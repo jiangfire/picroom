@@ -110,6 +110,7 @@ fn num_cpus() -> usize {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
 

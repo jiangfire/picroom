@@ -9,7 +9,7 @@
 use crate::ServiceError;
 use async_trait::async_trait;
 use picroom_domain::{
-    Image, ImageId, NewUser, Page, PageReq, Team, TeamId, TeamMember, User, UserId,
+    Image, ImageId, NewOidcUser, NewUser, Page, PageReq, Team, TeamId, TeamMember, User, UserId,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -277,6 +277,16 @@ pub trait UserRepository: Send + Sync {
     async fn find_by_id(&self, id: UserId) -> Result<Option<User>, ServiceError>;
     /// Sets the user's disabled flag.
     async fn set_disabled(&self, id: UserId, disabled: bool) -> Result<(), ServiceError>;
+    /// Looks up a user by their external OIDC identity (`provider` + `subject`).
+    /// `Ok(None)` means no local account is linked to that identity.
+    async fn find_by_external(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<User>, ServiceError>;
+    /// Creates a user authenticated via OIDC (no local password) and records
+    /// the `oidc_links` row binding them to `provider` + `subject`.
+    async fn create_oidc_user(&self, new: &NewOidcUser) -> Result<User, ServiceError>;
 }
 
 /// PostgreSQL-backed user repository.
@@ -401,6 +411,67 @@ impl UserRepository for PgUserRepository {
             .await
             .map_err(|e| ServiceError::Internal(format!("set disabled: {e}")))?;
         Ok(())
+    }
+
+    async fn find_by_external(
+        &self,
+        provider: &str,
+        subject: &str,
+    ) -> Result<Option<User>, ServiceError> {
+        let user_id: Option<Uuid> = sqlx::query_scalar(
+            r"SELECT user_id FROM oidc_links WHERE provider = $1 AND subject = $2",
+        )
+        .bind(provider)
+        .bind(subject)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("find oidc link: {e}")))?;
+        match user_id {
+            Some(id) => self.find_by_id(UserId(id)).await,
+            None => Ok(None),
+        }
+    }
+
+    async fn create_oidc_user(&self, new: &NewOidcUser) -> Result<User, ServiceError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("begin tx: {e}")))?;
+        let id = Uuid::now_v7();
+        let row: (Uuid, String, String, bool, OffsetDateTime) = sqlx::query_as(
+            r"INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at)
+              VALUES ($1, $2, $3, NULL, $4, NOW(), NOW())
+              RETURNING id, email, name, disabled, created_at",
+        )
+        .bind(id)
+        .bind(&new.email)
+        .bind(&new.name)
+        .bind(&new.role)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("create oidc user: {e}")))?;
+        sqlx::query(
+            r"INSERT INTO oidc_links (user_id, provider, subject) VALUES ($1, $2, $3)",
+        )
+        .bind(id)
+        .bind(&new.provider)
+        .bind(&new.subject)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("link oidc: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("commit tx: {e}")))?;
+        Ok(User {
+            id: UserId(row.0),
+            email: row.1,
+            name: row.2,
+            avatar_url: None,
+            role: new.role.clone(),
+            created_at: row.4,
+            disabled: row.3,
+        })
     }
 }
 

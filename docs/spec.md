@@ -647,7 +647,8 @@ Full OpenAPI document lives at `docs/api/openapi.yaml`. Key endpoints:
 
 ```
 POST   /api/v1/auth/login                       # password login
-POST   /api/v1/auth/oidc/:provider/callback     # OIDC callback
+GET    /api/v1/auth/oidc/:provider/login         # begin OIDC login (redirect to IdP)
+GET    /api/v1/auth/oidc/:provider/callback      # OIDC callback (issues JWT)
 POST   /api/v1/auth/logout
 GET    /api/v1/me                                # current user
 POST   /api/v1/teams                             # create team
@@ -853,7 +854,7 @@ Loaded from environment variables (prefix `PICROOM_`) with optional TOML overrid
 # config/example.toml
 [server]
 bind_addr = "0.0.0.0:8080"
-request_timeout = "30s"
+request_timeout_secs = 30
 
 [database]
 url = "postgres://picroom:secret@localhost/picroom"
@@ -877,10 +878,16 @@ generate_thumbnail = true
 strip_exif = true
 max_dimension = 8192
 
+[auth.oidc]
+admin_emails = ["admin@example.com"]    # emails promoted to `admin` on first OIDC login
+secure_cookies = true                   # set false only for local HTTP dev (no TLS)
+
 [auth.oidc.providers.google]
 issuer = "https://accounts.google.com"
 client_id = "${OIDC_GOOGLE_CLIENT_ID}"
 client_secret = "${OIDC_GOOGLE_CLIENT_SECRET}"
+redirect_uri = "https://picroom.example.com/api/v1/auth/oidc/google/callback"
+scopes = ["openid", "email", "profile"]
 
 [quota]
 default_user_bytes = 10737418240       # 10 GiB

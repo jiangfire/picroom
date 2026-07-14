@@ -9,9 +9,8 @@
 //! the provider's published JWKs (or, in dev mode, a shared secret).
 
 use async_trait::async_trait;
-use jsonwebtoken::DecodingKey;
+use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -66,6 +65,111 @@ pub struct DiscoveryDoc {
     pub scopes_supported: Option<Vec<String>>,
 }
 
+/// A single JSON Web Key (subset we need for signature verification).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Jwk {
+    /// Key id, matched against the `id_token`'s `kid` header.
+    #[serde(default)]
+    pub kid: Option<String>,
+    /// Key type: `RSA` or `EC`.
+    pub kty: String,
+    /// Algorithm, e.g. `RS256` / `ES256`.
+    #[serde(default)]
+    pub alg: Option<String>,
+    /// RSA modulus (base64url).
+    #[serde(default)]
+    pub n: Option<String>,
+    /// RSA public exponent (base64url).
+    #[serde(default)]
+    pub e: Option<String>,
+    /// EC x coordinate (base64url).
+    #[serde(default)]
+    pub x: Option<String>,
+    /// EC y coordinate (base64url).
+    #[serde(default)]
+    pub y: Option<String>,
+}
+
+/// A JWKS document.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Jwks {
+    /// Keys published by the provider.
+    pub keys: Vec<Jwk>,
+}
+
+impl Jwks {
+    /// Fetches the provider's JWKS document.
+    pub async fn fetch(http: &reqwest::Client, jwks_uri: &str) -> Result<Self, OidcError> {
+        http.get(jwks_uri)
+            .send()
+            .await
+            .map_err(|e| OidcError::Discovery(format!("jwks: {e}")))?
+            .error_for_status()
+            .map_err(|e| OidcError::Discovery(format!("jwks: {e}")))?
+            .json()
+            .await
+            .map_err(|e| OidcError::Discovery(format!("jwks json: {e}")))
+    }
+
+    /// Selects the key matching `kid` (or the first key when `kid` is absent)
+    /// and builds a `DecodingKey` for it.
+    pub fn decoding_key(&self, kid: Option<&str>) -> Result<DecodingKey, OidcError> {
+        let key = match kid {
+            Some(kid) => self
+                .keys
+                .iter()
+                .find(|k| k.kid.as_deref() == Some(kid))
+                .ok_or_else(|| OidcError::InvalidIdToken(format!("no jwk for kid {kid}")))?,
+            None => self
+                .keys
+                .first()
+                .ok_or_else(|| OidcError::InvalidIdToken("empty jwks".into()))?,
+        };
+        match key.kty.as_str() {
+            "RSA" => {
+                let (n, e) = (key.n.as_deref().ok_or_else(|| {
+                    OidcError::InvalidIdToken("jwk missing n".into())
+                })?, key.e.as_deref().ok_or_else(|| {
+                    OidcError::InvalidIdToken("jwk missing e".into())
+                })?);
+                DecodingKey::from_rsa_components(n, e)
+                    .map_err(|e| OidcError::InvalidIdToken(format!("rsa key: {e}")))
+            }
+            "EC" => {
+                let (x, y) = (key.x.as_deref().ok_or_else(|| {
+                    OidcError::InvalidIdToken("jwk missing x".into())
+                })?, key.y.as_deref().ok_or_else(|| {
+                    OidcError::InvalidIdToken("jwk missing y".into())
+                })?);
+                DecodingKey::from_ec_components(x, y)
+                    .map_err(|e| OidcError::InvalidIdToken(format!("ec key: {e}")))
+            }
+            other => Err(OidcError::InvalidIdToken(format!(
+                "unsupported kty {other}"
+            ))),
+        }
+    }
+
+    /// Picks the verification algorithm for `key`.
+    pub fn algorithm(key: &Jwk) -> jsonwebtoken::Algorithm {
+        if let Some(alg) = key.alg.as_deref() {
+            return match alg {
+                "RS384" => jsonwebtoken::Algorithm::RS384,
+                "RS512" => jsonwebtoken::Algorithm::RS512,
+                "ES256" => jsonwebtoken::Algorithm::ES256,
+                "ES384" => jsonwebtoken::Algorithm::ES384,
+                // RS256 and any unknown alg → fall back to RS256.
+                _ => jsonwebtoken::Algorithm::RS256,
+            };
+        }
+        // Fall back on key type when `alg` is absent.
+        match key.kty.as_str() {
+            "EC" => jsonwebtoken::Algorithm::ES256,
+            _ => jsonwebtoken::Algorithm::RS256,
+        }
+    }
+}
+
 /// Tokens returned from the OIDC provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcTokens {
@@ -110,7 +214,7 @@ pub struct HttpOidcClient {
     config: OidcProvider,
     doc: DiscoveryDoc,
     http: reqwest::Client,
-    decoding_key: Arc<DecodingKey>,
+    jwks: Jwks,
     insecure_skip_verify: bool,
 }
 
@@ -146,16 +250,23 @@ impl HttpOidcClient {
             .await
             .map_err(|e| OidcError::Discovery(e.to_string()))?;
 
-        // Use HS256 with the client secret as the verification key in dev mode.
-        // A production implementation would fetch the JWKS document.
-        let decoding_key = Arc::new(DecodingKey::from_secret(config.client_secret.as_bytes()));
+        // Fetch the provider's signing keys so we can verify the id_token's
+        // signature with the public JWKS (RS256/ES256) rather than a shared
+        // secret. In insecure (dev/test) mode we skip the fetch entirely —
+        // the keys are never used because signature verification is disabled.
+        let jwks = if config.insecure_skip_verify {
+            Jwks { keys: vec![] }
+        } else {
+            Jwks::fetch(&http, &doc.jwks_uri).await?
+        };
 
+        let insecure = config.insecure_skip_verify;
         Ok(Self {
             config,
             doc,
             http,
-            decoding_key,
-            insecure_skip_verify: false,
+            jwks,
+            insecure_skip_verify: insecure,
         })
     }
 
@@ -281,51 +392,85 @@ pub struct IdTokenClaims {
     pub aud: serde_json::Value,
     pub exp: i64,
     pub iat: i64,
+    /// OIDC nonce, used to bind the `id_token` to the authorization request.
+    #[serde(default)]
+    pub nonce: Option<String>,
     #[serde(default)]
     pub email: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// Email verification status asserted by the `IdP`.
+    #[serde(default)]
+    pub email_verified: Option<bool>,
 }
 
-/// Verifies an ID-token signature + claims using this client's decoding key.
+/// Verifies an ID-token signature + claims.
 ///
-/// In production, the `DecodingKey` would be derived from the provider's
-/// JWKS endpoint. Here we use HS256 with the client secret for parity
-/// with how [`JwtService`](crate::jwt::JwtService) signs our own tokens.
+/// In production the signature is verified against the provider's published
+/// JWKS (RS256/ES256). When `insecure_skip_verify` is set the signature is
+/// skipped (dev/test `IdPs` only). `expected_nonce`, when provided, must match
+/// the token's `nonce` claim to bind it to the authorization request.
 pub fn verify_id_token(
     client: &HttpOidcClient,
     id_token: &str,
+    expected_nonce: Option<&str>,
 ) -> Result<IdTokenClaims, OidcError> {
-    use jsonwebtoken::{decode, Algorithm, Validation};
-    let mut validation = Validation::new(Algorithm::HS256);
+    if client.insecure_skip_verify {
+        let claims = decode_unsigned(id_token)?;
+        check_nonce(&claims, expected_nonce)?;
+        return Ok(claims);
+    }
+
+    let header =
+        decode_header(id_token).map_err(|e| OidcError::InvalidIdToken(format!("header: {e}")))?;
+    let jwk = client
+        .jwks
+        .keys
+        .iter()
+        .find(|k| k.kid == header.kid)
+        .or_else(|| client.jwks.keys.first())
+        .ok_or_else(|| OidcError::InvalidIdToken("no jwk available".into()))?;
+    let key = client.jwks.decoding_key(header.kid.as_deref())?;
+    let mut validation = Validation::new(Jwks::algorithm(jwk));
     validation.set_audience(&[&client.config.client_id]);
     validation.set_issuer(&[client.config.issuer.as_str()]);
     // Tight clock skew tolerance so an obviously-expired token is rejected.
     validation.leeway = 0;
 
-    let key = client.decoding_key.clone();
-    if client.insecure_skip_verify {
-        // Still parse claims without verifying the signature.
-        let mut parts = id_token.split('.');
-        let _ = parts.next();
-        let payload_b64 = parts
-            .next()
-            .ok_or_else(|| OidcError::InvalidIdToken("malformed token".into()))?;
-        use base64::Engine;
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload_b64)
-            .map_err(|e| OidcError::InvalidIdToken(format!("b64: {e}")))?;
-        let claims: IdTokenClaims = serde_json::from_slice(&payload)
-            .map_err(|e| OidcError::InvalidIdToken(format!("json: {e}")))?;
-        let now = OffsetDateTime::now_utc().unix_timestamp();
-        if claims.exp < now {
-            return Err(OidcError::InvalidIdToken("expired".into()));
+    let claims = decode::<IdTokenClaims>(id_token, &key, &validation)
+        .map_err(|e| OidcError::InvalidIdToken(e.to_string()))?
+        .claims;
+    check_nonce(&claims, expected_nonce)?;
+    Ok(claims)
+}
+
+/// Validates the nonce binding when one is expected.
+fn check_nonce(claims: &IdTokenClaims, expected: Option<&str>) -> Result<(), OidcError> {
+    match expected {
+        Some(expected) if claims.nonce.as_deref() != Some(expected) => {
+            Err(OidcError::InvalidIdToken("nonce mismatch".into()))
         }
-        return Ok(claims);
+        _ => Ok(()),
     }
-    let token_data = decode::<IdTokenClaims>(id_token, &key, &validation)
-        .map_err(|e| OidcError::InvalidIdToken(e.to_string()))?;
-    Ok(token_data.claims)
+}
+
+/// Parses ID-token claims without verifying the signature (dev mode).
+fn decode_unsigned(id_token: &str) -> Result<IdTokenClaims, OidcError> {
+    use base64::Engine;
+    let payload_b64 = id_token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| OidcError::InvalidIdToken("malformed token".into()))?;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .map_err(|e| OidcError::InvalidIdToken(format!("b64: {e}")))?;
+    let claims: IdTokenClaims = serde_json::from_slice(&payload)
+        .map_err(|e| OidcError::InvalidIdToken(format!("json: {e}")))?;
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    if claims.exp < now {
+        return Err(OidcError::InvalidIdToken("expired".into()));
+    }
+    Ok(claims)
 }
 
 #[cfg(test)]
@@ -372,5 +517,134 @@ mod tests {
             cfg.scopes
         };
         assert_eq!(scopes.join(" "), "openid email profile");
+    }
+}
+
+/// Real JWKS signature-verification roundtrip: generate an RSA keypair, derive
+/// the JWK `n`/`e` from the public key, build a `DecodingKey` via the same code
+/// path the callback uses, sign a token with the private key, and verify it.
+#[cfg(test)]
+mod jwks_roundtrip_tests {
+    use super::*;
+    use base64::Engine;
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header, Validation};
+    use rand::rngs::OsRng;
+    use rsa::pkcs8::EncodePrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::RsaPrivateKey;
+    use serde_json;
+
+    #[test]
+    fn jwks_rs256_verify_roundtrip() {
+        let mut rng = OsRng;
+        let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("keypair");
+        let pem = priv_key
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("pem");
+
+        // Derive JWK components from the public key.
+        let n = priv_key.n().to_bytes_be();
+        let e = priv_key.e().to_bytes_be();
+        let n_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(n);
+        let e_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(e);
+
+        let jwk = Jwk {
+            kid: Some("test-key".to_string()),
+            kty: "RSA".to_string(),
+            alg: Some("RS256".to_string()),
+            n: Some(n_b64),
+            e: Some(e_b64),
+            x: None,
+            y: None,
+        };
+        let jwks = Jwks {
+            keys: vec![jwk],
+        };
+
+        // Algorithm dispatch must pick RS256 from the `alg` claim.
+        assert_eq!(Jwks::algorithm(jwks.keys.first().unwrap()), Algorithm::RS256);
+
+        // Build a decoding key from the JWK (the exact path verify_id_token uses).
+        let decoding_key = jwks
+            .decoding_key(Some("test-key"))
+            .expect("decoding key");
+
+        let claims = IdTokenClaims {
+            sub: "user-123".to_string(),
+            iss: "https://issuer.example.com".to_string(),
+            aud: serde_json::json!("client-id"),
+            exp: time::OffsetDateTime::now_utc().unix_timestamp() + 300,
+            iat: time::OffsetDateTime::now_utc().unix_timestamp(),
+            nonce: Some("nonce-abc".to_string()),
+            email: Some("user@example.com".to_string()),
+            name: Some("Test User".to_string()),
+            email_verified: Some(true),
+        };
+        let token = encode(
+            &Header::new(Algorithm::RS256),
+            &claims,
+            &EncodingKey::from_rsa_pem(pem.as_bytes()).expect("encoding key"),
+        )
+        .expect("sign");
+
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_audience(&["client-id"]);
+        validation.set_issuer(&["https://issuer.example.com"]);
+        validation.leeway = 0;
+        let verified = jsonwebtoken::decode::<IdTokenClaims>(&token, &decoding_key, &validation)
+            .expect("verify");
+        assert_eq!(verified.claims.sub, "user-123");
+        assert_eq!(
+            verified.claims.email.as_deref(),
+            Some("user@example.com")
+        );
+    }
+
+    #[test]
+    fn jwks_algorithm_dispatches_by_alg_and_kty() {
+        let rsa = Jwk {
+            kid: None,
+            kty: "RSA".into(),
+            alg: Some("RS256".into()),
+            n: None,
+            e: None,
+            x: None,
+            y: None,
+        };
+        assert_eq!(Jwks::algorithm(&rsa), Algorithm::RS256);
+
+        let es384 = Jwk {
+            kid: None,
+            kty: "EC".into(),
+            alg: Some("ES384".into()),
+            n: None,
+            e: None,
+            x: None,
+            y: None,
+        };
+        assert_eq!(Jwks::algorithm(&es384), Algorithm::ES384);
+
+        // Fallback to key type when `alg` is absent.
+        let ec_no_alg = Jwk {
+            kid: None,
+            kty: "EC".into(),
+            alg: None,
+            n: None,
+            e: None,
+            x: None,
+            y: None,
+        };
+        assert_eq!(Jwks::algorithm(&ec_no_alg), Algorithm::ES256);
+
+        let rsa_no_alg = Jwk {
+            kid: None,
+            kty: "RSA".into(),
+            alg: None,
+            n: None,
+            e: None,
+            x: None,
+            y: None,
+        };
+        assert_eq!(Jwks::algorithm(&rsa_no_alg), Algorithm::RS256);
     }
 }

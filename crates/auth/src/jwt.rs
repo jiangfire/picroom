@@ -26,6 +26,9 @@ pub struct JwtClaims {
     /// Optional scopes.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Optional nonce (OIDC id-token binding / anti-replay).
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 /// JWT errors.
@@ -93,6 +96,7 @@ impl JwtService {
             iat: now,
             exp: now + self.ttl_seconds,
             scopes: scopes.to_vec(),
+            nonce: None,
         };
         encode(
             &Header::default(),
@@ -100,6 +104,11 @@ impl JwtService {
             &EncodingKey::from_secret(self.secret.as_bytes()),
         )
         .map_err(|e| JwtError::Encode(e.to_string()))
+    }
+
+    /// Returns the configured token lifetime in seconds.
+    pub const fn ttl_secs(&self) -> i64 {
+        self.ttl_seconds
     }
 
     /// Verifies and decodes a JWT.
@@ -119,6 +128,55 @@ impl JwtService {
                 _ => Err(JwtError::Decode(e.to_string())),
             },
         }
+    }
+
+    /// Audience claimed by OIDC state cookies. Distinct from the API audience
+    /// so a state token can never be used as a bearer token.
+    const OIDC_STATE_AUDIENCE: &'static str = "oidc-state";
+
+    /// Issues a short-lived OIDC state token binding `state` + `nonce`.
+    ///
+    /// Set as an `HttpOnly` cookie before redirecting to the `IdP`; the callback
+    /// verifies it to defeat CSRF and confirm the `nonce` matches the `id_token`.
+    pub fn issue_oidc_state(&self, state: &str, nonce: &str) -> Result<String, JwtError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let claims = JwtClaims {
+            sub: state.to_string(),
+            iss: self.issuer.clone(),
+            aud: Self::OIDC_STATE_AUDIENCE.to_string(),
+            iat: now,
+            exp: now + 600,
+            scopes: vec![],
+            nonce: Some(nonce.to_string()),
+        };
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(self.secret.as_bytes()),
+        )
+        .map_err(|e| JwtError::Encode(e.to_string()))
+    }
+
+    /// Verifies an OIDC state token and returns its `(state, nonce)` binding.
+    pub fn verify_oidc_state(&self, token: &str) -> Result<(String, String), JwtError> {
+        let mut validation = Validation::default();
+        validation.set_audience(&[Self::OIDC_STATE_AUDIENCE]);
+        validation.set_issuer(&[&self.issuer]);
+        let data = decode::<JwtClaims>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &validation,
+        )
+        .map_err(|e| match e.kind() {
+            JwtErrorKind::ExpiredSignature => JwtError::Expired,
+            JwtErrorKind::InvalidSignature => JwtError::InvalidSignature,
+            _ => JwtError::Decode(e.to_string()),
+        })?;
+        let nonce = data
+            .claims
+            .nonce
+            .ok_or_else(|| JwtError::Decode("missing nonce".into()))?;
+        Ok((data.claims.sub, nonce))
     }
 }
 

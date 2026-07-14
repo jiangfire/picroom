@@ -62,7 +62,7 @@ pub struct User {
     pub disabled: bool,
 }
 
-/// User creation request.
+/// User creation request (local, password-based).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewUser {
     /// Email.
@@ -71,6 +71,28 @@ pub struct NewUser {
     pub name: String,
     /// Argon2id-hashed password.
     pub password_hash: String,
+    /// Initial role (default: `viewer`).
+    pub role: String,
+}
+
+/// User creation request for an externally-authenticated (OIDC) identity.
+///
+/// OIDC accounts have no password; they are linked to an `IdP` via the
+/// `oidc_links` table keyed by (`provider`, `subject`) — the provider's `sub`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewOidcUser {
+    /// Email (from the `IdP`'s `email`/`userinfo` claim).
+    pub email: String,
+    /// Display name.
+    pub name: String,
+    /// Optional avatar URL.
+    pub avatar_url: Option<String>,
+    /// `IdP` key (the OIDC provider config name, e.g. `"google"`).
+    pub provider: String,
+    /// Subject identifier at the `IdP` (`sub`).
+    pub subject: String,
+    /// Whether the `IdP` has verified the email.
+    pub email_verified: bool,
     /// Initial role (default: `viewer`).
     pub role: String,
 }

@@ -22,6 +22,7 @@ picroom-storage = { workspace = true }
 picroom-s3compat = { workspace = true }
 picroom-worker = { workspace = true }
 axum = { workspace = true }
+axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["trace", "request-id"] }
 async-trait = { workspace = true }

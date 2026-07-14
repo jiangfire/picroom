@@ -12,6 +12,7 @@
 use figment::providers::{Env, Format, Toml};
 use figment::Figment;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Top-level configuration.
@@ -149,6 +150,49 @@ pub struct AuthConfig {
     pub jwt_audience: String,
     /// JWT TTL in seconds.
     pub jwt_ttl_secs: i64,
+    /// OIDC / SSO configuration.
+    #[serde(default)]
+    pub oidc: OidcConfig,
+}
+
+/// A single OIDC provider (parsed from `[auth.oidc.providers.<name>]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcProviderConfig {
+    /// Issuer URL (e.g. `https://accounts.google.com`).
+    pub issuer: String,
+    /// OAuth client id.
+    pub client_id: String,
+    /// OAuth client secret.
+    pub client_secret: String,
+    /// Redirect URI registered with the provider.
+    pub redirect_uri: String,
+    /// Extra scopes to request (defaults to `openid email profile`).
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// Skip ID-token signature verification (dev/test only).
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+}
+
+/// OIDC configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OidcConfig {
+    /// Provider key → provider config. The key is used in the callback URL
+    /// (`/api/v1/auth/oidc/:provider/...`) and stored as the link `provider`.
+    #[serde(default)]
+    pub providers: HashMap<String, OidcProviderConfig>,
+    /// Emails promoted to the `admin` role on first OIDC login.
+    #[serde(default)]
+    pub admin_emails: Vec<String>,
+    /// Whether the OIDC state cookie is marked `Secure`. Keep `true` in
+    /// production (served over HTTPS). Set `false` only for local HTTP dev.
+    #[serde(default = "default_true")]
+    pub secure_cookies: bool,
+}
+
+/// `true` for serde `default = "..."`.
+const fn default_true() -> bool {
+    true
 }
 
 impl Default for AuthConfig {
@@ -160,6 +204,7 @@ impl Default for AuthConfig {
             jwt_issuer: "picroom".to_string(),
             jwt_audience: "picroom-api".to_string(),
             jwt_ttl_secs: 3600,
+            oidc: OidcConfig::default(),
         }
     }
 }
@@ -333,5 +378,41 @@ mod tests {
     fn load_config_from_missing_file_falls_back_to_env_and_default() {
         let c = load_config_from(Some("/nonexistent/path.toml")).unwrap_or_default();
         assert_eq!(c.server.bind_addr, "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn oidc_config_parses_from_toml() {
+        let toml = r#"
+[auth.oidc]
+admin_emails = ["admin@example.com"]
+secure_cookies = false
+
+[auth.oidc.providers.google]
+issuer = "https://accounts.google.com"
+client_id = "cid"
+client_secret = "csec"
+redirect_uri = "https://app.example.com/cb"
+scopes = ["openid", "email"]
+"#;
+        let path = std::env::temp_dir().join(format!("picroom-oidc-cfg-{}.toml", std::process::id()));
+        std::fs::write(&path, toml).unwrap();
+        let cfg = load_config_from(Some(&path)).expect("load");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            cfg.auth.oidc.admin_emails,
+            vec!["admin@example.com".to_string()]
+        );
+        // `secure_cookies` defaults to true; the TOML overrides it to false.
+        assert!(!cfg.auth.oidc.secure_cookies);
+        let google = cfg
+            .auth
+            .oidc
+            .providers
+            .get("google")
+            .expect("google provider");
+        assert_eq!(google.issuer, "https://accounts.google.com");
+        assert_eq!(google.client_id, "cid");
+        assert_eq!(google.scopes, vec!["openid".to_string(), "email".to_string()]);
     }
 }

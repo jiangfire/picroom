@@ -10,7 +10,8 @@ use http_body_util::BodyExt;
 use picroom_api::AppState;
 use picroom_audit::NoopAuditSink;
 use picroom_domain::{
-    Image, ImageId, NewUser, Page, PageReq, StorageKey, Team, TeamId, TeamMember, User, UserId,
+    Image, ImageId, NewOidcUser, NewUser, Page, PageReq, StorageKey, Team, TeamId, TeamMember,
+    User, UserId,
 };
 use picroom_service::{
     ImageRepository, ServiceError, StoragePolicy, StoragePolicyRepository, TeamRepository,
@@ -67,6 +68,26 @@ impl UserRepository for InMemoryUserRepo {
 
     async fn set_disabled(&self, _id: UserId, _disabled: bool) -> Result<(), ServiceError> {
         Ok(())
+    }
+
+    async fn find_by_external(
+        &self,
+        _provider: &str,
+        _subject: &str,
+    ) -> Result<Option<User>, ServiceError> {
+        Ok(None)
+    }
+
+    async fn create_oidc_user(&self, _new: &NewOidcUser) -> Result<User, ServiceError> {
+        Ok(User {
+            id: picroom_domain::UserId(uuid::Uuid::now_v7()),
+            email: _new.email.clone(),
+            name: _new.name.clone(),
+            avatar_url: None,
+            role: _new.role.clone(),
+            created_at: time::OffsetDateTime::now_utc(),
+            disabled: false,
+        })
     }
 }
 

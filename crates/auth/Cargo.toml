@@ -35,3 +35,4 @@ wiremock = "0.6"
 pretty_assertions = { workspace = true }
 rstest = { workspace = true }
 mockall = { workspace = true }
+rsa = { version = "0.9" }

@@ -52,6 +52,11 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }
 
+    /// 501 Not Implemented.
+    pub fn not_implemented(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::NOT_IMPLEMENTED, "not_implemented", message)
+    }
+
     /// 413 Payload Too Large.
     pub fn quota_exceeded(message: impl Into<String>) -> Self {
         Self::new(StatusCode::PAYLOAD_TOO_LARGE, "quota_exceeded", message)
