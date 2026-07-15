@@ -59,3 +59,24 @@ impl DlqSink for InMemoryDlq {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn push_appends_and_entries_snapshots() {
+        let dlq = InMemoryDlq::new();
+        let entry = DlqEntry {
+            job_id: Uuid::now_v7(),
+            error: "boom".into(),
+            attempts: 3,
+            moved_at: OffsetDateTime::now_utc(),
+        };
+        dlq.push(entry.clone()).await.unwrap();
+        let all = dlq.entries();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].error, "boom");
+        assert_eq!(all[0].attempts, 3);
+    }
+}

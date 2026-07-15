@@ -73,4 +73,52 @@ mod tests {
         assert_eq!(p.delay_secs(3), 8);
         assert_eq!(p.delay_secs(6), 60); // capped
     }
+
+    #[test]
+    fn none_strategy_is_zero_delay() {
+        let p = RetryPolicy {
+            max_attempts: 3,
+            initial_delay_secs: 5,
+            max_delay_secs: 100,
+            strategy: RetryStrategy::None,
+        };
+        assert_eq!(p.delay_secs(1), 0);
+        assert_eq!(p.delay_secs(9), 0);
+    }
+
+    #[test]
+    fn fixed_strategy_ignores_attempt() {
+        let p = RetryPolicy {
+            max_attempts: 3,
+            initial_delay_secs: 7,
+            max_delay_secs: 100,
+            strategy: RetryStrategy::Fixed,
+        };
+        assert_eq!(p.delay_secs(1), 7);
+        assert_eq!(p.delay_secs(9), 7);
+    }
+
+    #[test]
+    fn linear_strategy_scales_and_caps() {
+        let p = RetryPolicy {
+            max_attempts: 3,
+            initial_delay_secs: 3,
+            max_delay_secs: 100,
+            strategy: RetryStrategy::Linear,
+        };
+        assert_eq!(p.delay_secs(1), 3);
+        assert_eq!(p.delay_secs(2), 6);
+        assert_eq!(p.delay_secs(50), 100);
+    }
+
+    #[test]
+    fn exponential_caps_very_high_attempt() {
+        let p = RetryPolicy {
+            max_attempts: 3,
+            initial_delay_secs: 2,
+            max_delay_secs: 60,
+            strategy: RetryStrategy::Exponential,
+        };
+        assert_eq!(p.delay_secs(20), 60);
+    }
 }

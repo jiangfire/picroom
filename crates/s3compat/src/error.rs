@@ -50,3 +50,48 @@ impl IntoResponse for S3Error {
         (status, [(header::CONTENT_TYPE, "application/xml")], body).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::header;
+
+    #[test]
+    fn bad_request_maps_to_400_with_xml() {
+        let resp = S3Error::BadRequest("nope".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/xml"
+        );
+    }
+
+    #[test]
+    fn signature_mismatch_maps_to_403() {
+        let resp = S3Error::SignatureMismatch.into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/xml"
+        );
+    }
+
+    #[test]
+    fn not_found_maps_to_404() {
+        let resp = S3Error::NotFound("x".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn internal_maps_to_500() {
+        let resp = S3Error::Internal("boom".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn xml_escape_handles_special_chars() {
+        assert_eq!(xml_escape("a<b>c&d"), "a&lt;b&gt;c&amp;d");
+        assert_eq!(xml_escape("plain"), "plain");
+        assert_eq!(xml_escape("&<>"), "&amp;&lt;&gt;");
+    }
+}

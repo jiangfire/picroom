@@ -151,4 +151,52 @@ mod tests {
         // Should be byte-identical since already small enough.
         assert_eq!(bytes, original);
     }
+
+    fn make_jpeg(w: u32, h: u32) -> Bytes {
+        let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .unwrap();
+        Bytes::from(buf)
+    }
+
+    fn make_webp(w: u32, h: u32) -> Bytes {
+        let img = image::RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::WebP)
+            .unwrap();
+        Bytes::from(buf)
+    }
+
+    #[tokio::test]
+    async fn resize_jpeg_keeps_format_and_downscales() {
+        let p = ResizeProcessor::new(50);
+        let out = p
+            .process(&PipelineContext::default(), make_jpeg(200, 100))
+            .await
+            .unwrap();
+        let bytes = match out {
+            ProcessorOutput::Bytes(b) => b,
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
+        };
+        let dims = image::load_from_memory(&bytes).unwrap().dimensions();
+        assert_eq!(dims, (50, 25));
+    }
+
+    #[tokio::test]
+    async fn resize_webp_keeps_format_and_downscales() {
+        let p = ResizeProcessor::new(50);
+        let out = p
+            .process(&PipelineContext::default(), make_webp(200, 100))
+            .await
+            .unwrap();
+        let bytes = match out {
+            ProcessorOutput::Bytes(b) => b,
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
+        };
+        let dims = image::load_from_memory(&bytes).unwrap().dimensions();
+        assert_eq!(dims, (50, 25));
+    }
 }

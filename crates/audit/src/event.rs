@@ -128,4 +128,47 @@ mod tests {
         assert_eq!(AuditAction::ImageUpload.as_str(), "image.upload");
         assert_eq!(AuditAction::Other.as_str(), "other");
     }
+
+    #[test]
+    fn parse_roundtrips_known_actions() {
+        assert_eq!(AuditAction::parse("auth.login"), AuditAction::Login);
+        assert_eq!(AuditAction::parse("auth.logout"), AuditAction::Logout);
+        assert_eq!(AuditAction::parse("image.upload"), AuditAction::ImageUpload);
+        assert_eq!(AuditAction::parse("image.delete"), AuditAction::ImageDelete);
+        assert_eq!(AuditAction::parse("team.create"), AuditAction::TeamCreate);
+        assert_eq!(
+            AuditAction::parse("team.member_add"),
+            AuditAction::TeamMemberAdd
+        );
+        assert_eq!(
+            AuditAction::parse("team.member_remove"),
+            AuditAction::TeamMemberRemove
+        );
+        assert_eq!(AuditAction::parse("user.create"), AuditAction::UserCreate);
+        assert_eq!(
+            AuditAction::parse("user.role_change"),
+            AuditAction::UserRoleChange
+        );
+        assert_eq!(AuditAction::parse("user.disable"), AuditAction::UserDisable);
+        assert_eq!(AuditAction::parse("user.enable"), AuditAction::UserEnable);
+        assert_eq!(
+            AuditAction::parse("storage_policy.create"),
+            AuditAction::StoragePolicyCreate
+        );
+        assert_eq!(
+            AuditAction::parse("storage_policy.update"),
+            AuditAction::StoragePolicyUpdate
+        );
+        assert_eq!(
+            AuditAction::parse("permission.denied"),
+            AuditAction::PermissionDenied
+        );
+        assert_eq!(AuditAction::parse("other"), AuditAction::Other);
+    }
+
+    #[test]
+    fn parse_falls_back_to_other_for_unknown() {
+        assert_eq!(AuditAction::parse("totally.unknown"), AuditAction::Other);
+        assert_eq!(AuditAction::parse(""), AuditAction::Other);
+    }
 }

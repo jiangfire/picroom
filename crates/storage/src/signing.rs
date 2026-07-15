@@ -57,3 +57,31 @@ pub const fn canonical_request(
 pub fn verify(_params: &SigV4Params) -> Result<(), String> {
     Err("not implemented (skeleton)".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn params_new_stores_all_fields() {
+        let p = SigV4Params::new("ak", "sk", "us-east-1", "s3", Duration::from_secs(60));
+        assert_eq!(p.access_key_id, "ak");
+        assert_eq!(p.secret_access_key, "sk");
+        assert_eq!(p.region, "us-east-1");
+        assert_eq!(p.service, "s3");
+        assert_eq!(p.ttl, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn canonical_request_is_placeholder() {
+        // Phase-10 skeleton returns an empty canonical string.
+        assert_eq!(canonical_request("GET", "/", "", &[], "hash"), "");
+    }
+
+    #[test]
+    fn verify_is_unimplemented_skeleton() {
+        let p = SigV4Params::new("ak", "sk", "us-east-1", "s3", Duration::from_secs(60));
+        assert!(verify(&p).is_err());
+    }
+}

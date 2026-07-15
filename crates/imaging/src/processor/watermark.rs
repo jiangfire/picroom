@@ -66,3 +66,45 @@ impl Processor for WatermarkProcessor {
         Ok(ProcessorOutput::Bytes(input))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_watermark_records_text_and_position() {
+        let w = WatermarkProcessor::text("hello", WatermarkPosition::BottomRight);
+        assert_eq!(w.text.as_deref(), Some("hello"));
+        assert!(w.image.is_none());
+        assert_eq!(w.position, WatermarkPosition::BottomRight);
+    }
+
+    #[test]
+    fn image_watermark_records_bytes_and_position() {
+        let data = Bytes::from_static(b"img");
+        let w = WatermarkProcessor::image(data.clone(), WatermarkPosition::Center);
+        assert_eq!(w.image.as_deref(), Some(&data[..]));
+        assert!(w.text.is_none());
+        assert_eq!(w.position, WatermarkPosition::Center);
+    }
+
+    #[test]
+    fn name_reports_watermark() {
+        let w = WatermarkProcessor::text("x", WatermarkPosition::TopLeft);
+        assert_eq!(w.name(), "watermark");
+    }
+
+    #[tokio::test]
+    async fn process_passthrough_returns_input() {
+        let w = WatermarkProcessor::text("x", WatermarkPosition::TopRight);
+        let bytes = Bytes::from_static(b"payload");
+        let out = w
+            .process(&PipelineContext::default(), bytes.clone())
+            .await
+            .unwrap();
+        match out {
+            ProcessorOutput::Bytes(b) => assert_eq!(b, bytes),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
+        }
+    }
+}

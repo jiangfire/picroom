@@ -191,6 +191,8 @@ impl RbacEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -239,5 +241,33 @@ mod tests {
             ),
             Decision::Deny
         );
+    }
+
+    #[test]
+    fn role_as_str_roundtrips() {
+        assert_eq!(Role::Viewer.as_str(), "viewer");
+        assert_eq!(Role::Uploader.as_str(), "uploader");
+        assert_eq!(Role::Manager.as_str(), "manager");
+        assert_eq!(Role::Admin.as_str(), "admin");
+    }
+
+    #[test]
+    fn role_from_str_valid_is_case_insensitive() {
+        assert_eq!(Role::from_str("viewer").unwrap(), Role::Viewer);
+        assert_eq!(Role::from_str("UPLOADER").unwrap(), Role::Uploader);
+        assert_eq!(Role::from_str("Manager").unwrap(), Role::Manager);
+        assert_eq!(Role::from_str("admin").unwrap(), Role::Admin);
+    }
+
+    #[test]
+    fn role_from_str_invalid() {
+        assert!(Role::from_str("superuser").is_err());
+    }
+
+    #[test]
+    fn permission_new_builds_tuple() {
+        let p = Permission::new(ResourceType::Image, PermissionAction::Delete);
+        assert_eq!(p.resource, ResourceType::Image);
+        assert_eq!(p.action, PermissionAction::Delete);
     }
 }

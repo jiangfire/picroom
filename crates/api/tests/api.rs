@@ -14,8 +14,8 @@ use picroom_domain::{
     User, UserId,
 };
 use picroom_service::{
-    ImageRepository, ServiceError, StoragePolicy, StoragePolicyRepository, TeamRepository,
-    UserCredentials, UserRepository,
+    DeleteService, ImageRepository, ServiceError, StoragePolicy, StoragePolicyRepository,
+    TeamRepository, UserCredentials, UserRepository,
 };
 use picroom_storage::driver::LocalDriver;
 use serde_json::Value;
@@ -658,7 +658,9 @@ impl ImageRepository for InMemoryImageRepo {
         _owner_id: uuid::Uuid,
         _page: PageReq,
     ) -> Result<Page<Image>, ServiceError> {
-        Ok(Page::new(vec![], None, PageReq::default()))
+        // Test-only: return every stored image so the handler's mapping
+        // branch is exercised.
+        Ok(Page::new(self.images.clone(), None, _page))
     }
 
     async fn delete(&self, _id: ImageId) -> Result<(), ServiceError> {
@@ -1200,4 +1202,175 @@ async fn storage_list_forbids_non_admin() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+// ---------------------------------------------------------------------------
+// Image list / get / delete — wired image_repo + delete_service
+// ---------------------------------------------------------------------------
+
+/// Builds an app whose image handlers are backed by an in-memory image repo
+/// (and, when `with_delete` is set, the unified delete service).
+fn images_app(images: Vec<Image>, with_delete: bool) -> axum::Router {
+    let tmp = tempdir();
+    let storage = Arc::new(LocalDriver::new(tmp, "https://cdn.example.com/i"));
+    let audit = Arc::new(NoopAuditSink);
+    let repo: Arc<dyn ImageRepository> = Arc::new(InMemoryImageRepo { images });
+    let mut state = AppState::for_dev(storage, audit).with_image_repo(repo.clone());
+    if with_delete {
+        let del = Arc::new(DeleteService::new(
+            state.upload.storage.clone(),
+            repo.clone(),
+            state.upload.audit.clone(),
+        ));
+        state.delete_service = Some(del);
+    }
+    picroom_api::build_router(Arc::new(state))
+}
+
+#[tokio::test]
+async fn image_list_returns_items_for_owner() {
+    let img = sample_image(uuid::Uuid::now_v7(), UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let app = images_app(vec![img], false);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/images")
+                .header("authorization", bearer_token())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn image_get_returns_metadata() {
+    let id = uuid::Uuid::now_v7();
+    let img = sample_image(id, UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let app = images_app(vec![img], false);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/images/{id}"))
+                .header("authorization", bearer_token())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["id"], id.to_string());
+    assert!(json["owner_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn image_get_forbids_viewer_accessing_others_image() {
+    let id = uuid::Uuid::now_v7();
+    let img = sample_image(id, UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let app = images_app(vec![img], false);
+    let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
+    let token = jwt
+        .issue_with_scopes(uuid::Uuid::now_v7(), &["viewer".to_string()])
+        .unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/images/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn image_delete_returns_204_for_admin() {
+    let id = uuid::Uuid::now_v7();
+    let img = sample_image(id, UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let app = images_app(vec![img], true);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/images/{id}"))
+                .header("authorization", bearer_token())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn image_delete_forbids_viewer() {
+    let id = uuid::Uuid::now_v7();
+    let img = sample_image(id, UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let app = images_app(vec![img], true);
+    let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
+    let token = jwt
+        .issue_with_scopes(uuid::Uuid::now_v7(), &["viewer".to_string()])
+        .unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/images/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn upload_with_team_id_associates_team() {
+    use axum::http::header::CONTENT_TYPE;
+    let app = build_app();
+    let auth = bearer_token();
+    let team_id = uuid::Uuid::now_v7();
+    let boundary = "----picroom-test-boundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"t.png\"\r\n");
+    body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+    body.extend_from_slice(&make_png(40, 30));
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"team_id\"\r\n\r\n");
+    body.extend_from_slice(team_id.to_string().as_bytes());
+    body.extend_from_slice(b"\r\n");
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/images")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header("authorization", &auth)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["team_id"], team_id.to_string());
 }

@@ -77,3 +77,60 @@ pub async fn probe_into(ctx: &mut PipelineContext, input: Bytes) -> Result<(), P
     ctx.mime_type = Some(info.2);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::RgbImage;
+
+    fn make_png(w: u32, h: u32) -> Bytes {
+        let img = RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let dyn_img = image::DynamicImage::ImageRgb8(img);
+        let mut buf = Vec::new();
+        dyn_img
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        Bytes::from(buf)
+    }
+
+    #[test]
+    fn processor_name_and_new() {
+        let p = ProbeProcessor::new();
+        assert_eq!(p.name(), "probe");
+    }
+
+    #[tokio::test]
+    async fn process_passthrough_returns_input() {
+        let p = ProbeProcessor::new();
+        let bytes = make_png(4, 4);
+        let out = p
+            .process(&PipelineContext::default(), bytes.clone())
+            .await
+            .unwrap();
+        match out {
+            ProcessorOutput::Bytes(b) => assert_eq!(b, bytes),
+            ProcessorOutput::Variant { .. } => panic!("expected bytes"),
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_into_populates_context() {
+        let mut ctx = PipelineContext::default();
+        let bytes = make_png(8, 4);
+        probe_into(&mut ctx, bytes).await.unwrap();
+        assert_eq!(ctx.width, Some(8));
+        assert_eq!(ctx.height, Some(4));
+        assert_eq!(ctx.mime_type.as_deref(), Some("image/png"));
+    }
+
+    #[tokio::test]
+    async fn probe_into_rejects_garbage() {
+        let mut ctx = PipelineContext::default();
+        let res = probe_into(&mut ctx, Bytes::from_static(b"not an image")).await;
+        assert!(res.is_err());
+        // Context is left untouched on failure.
+        assert_eq!(ctx.width, None);
+        assert_eq!(ctx.height, None);
+        assert_eq!(ctx.mime_type, None);
+    }
+}

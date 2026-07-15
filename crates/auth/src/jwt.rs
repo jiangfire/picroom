@@ -218,4 +218,30 @@ mod tests {
         let claims = s.verify(&s.issue("u").unwrap()).unwrap();
         assert!(claims.scopes.is_empty());
     }
+
+    #[test]
+    fn oidc_state_roundtrips_binding() {
+        let s = JwtService::new("secret", "iss", "aud", 60);
+        let token = s.issue_oidc_state("state-xyz", "nonce-abc").unwrap();
+        let (state, nonce) = s.verify_oidc_state(&token).unwrap();
+        assert_eq!(state, "state-xyz");
+        assert_eq!(nonce, "nonce-abc");
+    }
+
+    #[test]
+    fn oidc_state_rejects_wrong_audience() {
+        // A normal bearer token (audience "aud") must NOT verify as an OIDC
+        // state token, which uses the distinct "oidc-state" audience.
+        let s = JwtService::new("secret", "iss", "aud", 60);
+        let bearer = s.issue("user-1").unwrap();
+        assert!(s.verify_oidc_state(&bearer).is_err());
+    }
+
+    #[test]
+    fn oidc_state_rejects_wrong_secret() {
+        let s1 = JwtService::new("a", "iss", "aud", 60);
+        let s2 = JwtService::new("b", "iss", "aud", 60);
+        let t = s1.issue_oidc_state("st", "nc").unwrap();
+        assert!(s2.verify_oidc_state(&t).is_err());
+    }
 }

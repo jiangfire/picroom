@@ -83,4 +83,28 @@ mod tests {
         let id = TeamId(Uuid::nil());
         assert_eq!(id.to_string(), "00000000-0000-0000-0000-000000000000");
     }
+
+    #[test]
+    fn team_id_from_uuid() {
+        let u = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+        let id = TeamId::from(u);
+        assert_eq!(id.as_uuid(), u);
+    }
+
+    #[test]
+    fn team_id_from_str_valid() {
+        let s = "00000000-0000-0000-0000-000000000000";
+        let id = TeamId::from_str(s).unwrap();
+        assert_eq!(id.as_uuid(), Uuid::nil());
+    }
+
+    #[test]
+    fn team_id_from_str_invalid() {
+        assert!(TeamId::from_str("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn team_id_nil() {
+        assert_eq!(TeamId::nil().as_uuid(), Uuid::nil());
+    }
 }

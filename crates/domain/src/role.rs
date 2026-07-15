@@ -91,4 +91,51 @@ mod tests {
             .iter()
             .any(|p| p.resource == ResourceType::System && p.action == PermissionAction::Admin));
     }
+
+    #[test]
+    fn uploader_has_read_and_create() {
+        let perms = Role::Uploader.default_permissions();
+        assert_eq!(perms.len(), 2);
+        assert!(perms.contains(&Permission::new(
+            ResourceType::Image,
+            PermissionAction::Read
+        )));
+        assert!(perms.contains(&Permission::new(
+            ResourceType::Image,
+            PermissionAction::Create
+        )));
+        assert!(!perms.contains(&Permission::new(
+            ResourceType::Image,
+            PermissionAction::Delete
+        )));
+    }
+
+    #[test]
+    fn manager_has_image_and_team_management() {
+        let perms = Role::Manager.default_permissions();
+        assert!(perms.contains(&Permission::new(
+            ResourceType::Image,
+            PermissionAction::Delete
+        )));
+        assert!(perms.contains(&Permission::new(
+            ResourceType::Team,
+            PermissionAction::Update
+        )));
+        // Manager cannot delete teams or administer users.
+        assert!(!perms.contains(&Permission::new(
+            ResourceType::Team,
+            PermissionAction::Delete
+        )));
+        assert!(!perms.contains(&Permission::new(
+            ResourceType::User,
+            PermissionAction::Admin
+        )));
+    }
+
+    #[test]
+    fn for_role_wraps_default_permissions() {
+        let rp = RolePermissions::for_role(Role::Viewer);
+        assert_eq!(rp.role, Role::Viewer);
+        assert_eq!(rp.permissions, Role::Viewer.default_permissions());
+    }
 }

@@ -341,6 +341,69 @@ mod tests {
         assert_eq!(url.as_str(), "https://cdn.example.com/i/a/b.jpg");
     }
 
+    #[tokio::test]
+    async fn list_without_prefix_returns_all_objects() {
+        let tmp = tempdir();
+        let d = LocalDriver::new(tmp.clone(), "/i");
+        d.put(&StorageKey::parse("a/1.bin").unwrap(), Bytes::from_static(b"x"))
+            .await
+            .unwrap();
+        d.put(&StorageKey::parse("b/2.bin").unwrap(), Bytes::from_static(b"yy"))
+            .await
+            .unwrap();
+        let page = d.list(None).await.unwrap();
+        assert_eq!(page.items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_with_prefix_filters_by_key() {
+        let tmp = tempdir();
+        let d = LocalDriver::new(tmp.clone(), "/i");
+        d.put(&StorageKey::parse("a/1.bin").unwrap(), Bytes::from_static(b"x"))
+            .await
+            .unwrap();
+        d.put(&StorageKey::parse("b/2.bin").unwrap(), Bytes::from_static(b"yy"))
+            .await
+            .unwrap();
+        let page = d.list(Some(&StorageKey::parse("a/").unwrap())).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].key.as_str(), "a/1.bin");
+    }
+
+    #[tokio::test]
+    async fn exists_reports_presence() {
+        let tmp = tempdir();
+        let d = LocalDriver::new(tmp.clone(), "/i");
+        let key = StorageKey::parse("e.bin").unwrap();
+        assert!(!d.exists(&key).await.unwrap());
+        d.put(&key, Bytes::from_static(b"z")).await.unwrap();
+        assert!(d.exists(&key).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn head_missing_returns_not_found() {
+        let tmp = tempdir();
+        let d = LocalDriver::new(tmp.clone(), "/i");
+        let err = d.head(&StorageKey::parse("missing.bin").unwrap()).await.unwrap_err();
+        assert!(matches!(err, StorageError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn sign_put_url_returns_prefixed_path() {
+        let d = LocalDriver::new(PathBuf::from("/tmp"), "https://cdn.example.com/i");
+        let key = StorageKey::parse("a/b.jpg").unwrap();
+        let url = d.sign_put_url(&key, Duration::from_secs(60)).await.unwrap();
+        assert_eq!(url.as_str(), "https://cdn.example.com/i/a/b.jpg");
+    }
+
+    #[test]
+    fn resolve_returns_joined_path() {
+        let d = LocalDriver::new(PathBuf::from("/tmp/root"), "/i");
+        let key = StorageKey::parse("sub/file.bin").unwrap();
+        let p = d.resolve(&key).unwrap();
+        assert!(p.ends_with("sub/file.bin"));
+    }
+
     fn tempdir() -> PathBuf {
         let base =
             std::env::temp_dir().join(format!("picroom-local-driver-{}", uuid::Uuid::now_v7()));

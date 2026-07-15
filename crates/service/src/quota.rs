@@ -114,3 +114,51 @@ impl Default for QuotaService {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn default_quota_constant_is_one_gib() {
+        assert_eq!(DEFAULT_QUOTA, 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn new_is_unbacked_and_uses_default_quota() {
+        let q = QuotaService::new();
+        assert!(q.pool.is_none());
+        assert_eq!(q.default_quota, DEFAULT_QUOTA);
+    }
+
+    #[test]
+    fn with_default_quota_overrides_cap() {
+        let q = QuotaService::new().with_default_quota(1234);
+        assert_eq!(q.default_quota, 1234);
+    }
+
+    #[test]
+    fn debug_reports_unbacked() {
+        let q = QuotaService::new();
+        assert!(format!("{q:?}").contains("db_backed: false"));
+    }
+
+    #[tokio::test]
+    async fn remaining_user_unbacked_is_unlimited() {
+        let q = QuotaService::new();
+        assert_eq!(q.remaining_user(Uuid::now_v7()).await.unwrap(), u64::MAX);
+    }
+
+    #[tokio::test]
+    async fn remaining_team_is_always_unlimited() {
+        let q = QuotaService::new();
+        assert_eq!(q.remaining_team(Uuid::now_v7()).await.unwrap(), u64::MAX);
+    }
+
+    #[tokio::test]
+    async fn charge_user_is_a_noop() {
+        let q = QuotaService::new();
+        assert!(q.charge_user(Uuid::now_v7(), 10).await.is_ok());
+    }
+}

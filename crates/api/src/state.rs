@@ -268,3 +268,105 @@ impl<A: AuditSink + ?Sized + Send + Sync> AuditSink for AuditSinkFromArc<A> {
         self.0.record(event).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picroom_audit::NoopAuditSink;
+    use picroom_storage::driver::LocalDriver;
+    use std::collections::HashMap;
+
+    fn tmpdir() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("picroom-state-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn for_dev_defaults_are_dev_mode() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let state = AppState::for_dev(storage, audit);
+        // In dev mode every DB-backed capability is absent.
+        assert!(state.image_repo.is_none());
+        assert!(state.user_repo.is_none());
+        assert!(state.team_repo.is_none());
+        assert!(state.audit_reader.is_none());
+        assert!(state.delete_service.is_none());
+        assert!(state.s3_credentials.is_none());
+        assert!(state.public_url_base.is_none());
+        assert!(state.oidc_providers.is_empty());
+        assert!(state.oidc_admin_emails.is_empty());
+        assert!(!state.cookie_secure);
+    }
+
+    #[test]
+    fn with_public_url_base_sets_field() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let state = AppState::for_dev(storage, audit)
+            .with_public_url_base("https://cdn.example.com".to_string());
+        assert_eq!(
+            state.public_url_base.as_deref(),
+            Some("https://cdn.example.com")
+        );
+    }
+
+    #[test]
+    fn with_oidc_sets_providers_and_admin_emails() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let mut providers = HashMap::new();
+        providers.insert(
+            "google".to_string(),
+            picroom_infra::config::OidcProviderConfig {
+                issuer: "https://accounts.google.com".to_string(),
+                client_id: "cid".to_string(),
+                client_secret: "sec".to_string(),
+                redirect_uri: "https://app/callback".to_string(),
+                scopes: vec![],
+                insecure_skip_verify: false,
+            },
+        );
+        let state = AppState::for_dev(storage, audit).with_oidc(
+            providers,
+            vec!["admin@example.com".to_string()],
+            true,
+        );
+        assert!(state.oidc_providers.contains_key("google"));
+        assert_eq!(state.oidc_admin_emails.len(), 1);
+        assert!(state.cookie_secure);
+    }
+
+    #[test]
+    fn with_oidc_empty_is_fine() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let state = AppState::for_dev(storage, audit).with_oidc(
+            HashMap::new(),
+            vec!["admin@example.com".to_string()],
+            true,
+        );
+        assert!(state.oidc_providers.is_empty());
+        assert_eq!(state.oidc_admin_emails.len(), 1);
+        assert!(state.cookie_secure);
+    }
+
+    #[test]
+    fn with_optional_job_queue_none_is_noop() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let state = AppState::for_dev(storage, audit).with_optional_job_queue(None);
+        assert!(state.upload.job_queue.is_none());
+    }
+
+    #[test]
+    fn jwt_provider_returns_jwt_service_for_both_types() {
+        let storage = Arc::new(LocalDriver::new(tmpdir(), "https://cdn.example.com/i"));
+        let audit = Arc::new(NoopAuditSink);
+        let state = AppState::for_dev(storage, audit);
+        let _svc = state.jwt_service();
+        let arc = Arc::new(state);
+        let _svc2 = arc.jwt_service();
+    }
+}
