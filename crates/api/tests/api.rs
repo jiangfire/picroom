@@ -597,6 +597,25 @@ async fn public_route_returns_404_for_missing_object() {
 }
 
 #[tokio::test]
+async fn public_route_returns_400_for_bad_key() {
+    // `..` is rejected by `StorageKey::parse` (PathTraversal). The leading
+    // `/i/` consumes the first segment, so the wildcard capture holds
+    // `../secret.bin` after axum's wildcard match.
+    let (app, _storage) = build_app_with_storage();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/i/img/%2E%2E/secret.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn public_route_sniffs_jpeg_content_type() {
     use picroom_domain::StorageKey;
     use picroom_storage::StorageWriter;
