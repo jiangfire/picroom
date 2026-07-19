@@ -22,8 +22,8 @@ pub mod rbac;
 pub use api_token::{ApiToken, ApiTokenService};
 pub use jwt::{JwtClaims, JwtService};
 pub use oidc::{
-    IdTokenClaims, HttpOidcClient, OidcClient, OidcError, OidcProvider, OidcUserInfo,
-    verify_id_token,
+    verify_id_token, HttpOidcClient, IdTokenClaims, OidcClient, OidcError, OidcProvider,
+    OidcUserInfo,
 };
 pub use password::{PasswordError, PasswordHasher};
 pub use rbac::{Decision, Permission, PermissionAction, RbacEngine, Resource, ResourceType, Role};

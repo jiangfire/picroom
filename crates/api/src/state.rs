@@ -8,6 +8,7 @@ use bytes::Bytes;
 use picroom_audit::{AuditReader, AuditSink};
 use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
+use picroom_infra::config::OidcProviderConfig;
 use picroom_service::repo::{
     ImageRepository, StoragePolicyRepository, TeamRepository, UserRepository,
 };
@@ -17,7 +18,6 @@ use picroom_service::QuotaService;
 use picroom_service::UploadService;
 use picroom_storage::Storage;
 use picroom_storage::{ObjectMeta, StorageLister, StorageReader, StorageSigner, StorageWriter};
-use picroom_infra::config::OidcProviderConfig;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;

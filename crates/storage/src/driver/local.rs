@@ -345,12 +345,18 @@ mod tests {
     async fn list_without_prefix_returns_all_objects() {
         let tmp = tempdir();
         let d = LocalDriver::new(tmp.clone(), "/i");
-        d.put(&StorageKey::parse("a/1.bin").unwrap(), Bytes::from_static(b"x"))
-            .await
-            .unwrap();
-        d.put(&StorageKey::parse("b/2.bin").unwrap(), Bytes::from_static(b"yy"))
-            .await
-            .unwrap();
+        d.put(
+            &StorageKey::parse("a/1.bin").unwrap(),
+            Bytes::from_static(b"x"),
+        )
+        .await
+        .unwrap();
+        d.put(
+            &StorageKey::parse("b/2.bin").unwrap(),
+            Bytes::from_static(b"yy"),
+        )
+        .await
+        .unwrap();
         let page = d.list(None).await.unwrap();
         assert_eq!(page.items.len(), 2);
     }
@@ -359,13 +365,22 @@ mod tests {
     async fn list_with_prefix_filters_by_key() {
         let tmp = tempdir();
         let d = LocalDriver::new(tmp.clone(), "/i");
-        d.put(&StorageKey::parse("a/1.bin").unwrap(), Bytes::from_static(b"x"))
+        d.put(
+            &StorageKey::parse("a/1.bin").unwrap(),
+            Bytes::from_static(b"x"),
+        )
+        .await
+        .unwrap();
+        d.put(
+            &StorageKey::parse("b/2.bin").unwrap(),
+            Bytes::from_static(b"yy"),
+        )
+        .await
+        .unwrap();
+        let page = d
+            .list(Some(&StorageKey::parse("a/").unwrap()))
             .await
             .unwrap();
-        d.put(&StorageKey::parse("b/2.bin").unwrap(), Bytes::from_static(b"yy"))
-            .await
-            .unwrap();
-        let page = d.list(Some(&StorageKey::parse("a/").unwrap())).await.unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].key.as_str(), "a/1.bin");
     }
@@ -384,7 +399,10 @@ mod tests {
     async fn head_missing_returns_not_found() {
         let tmp = tempdir();
         let d = LocalDriver::new(tmp.clone(), "/i");
-        let err = d.head(&StorageKey::parse("missing.bin").unwrap()).await.unwrap_err();
+        let err = d
+            .head(&StorageKey::parse("missing.bin").unwrap())
+            .await
+            .unwrap_err();
         assert!(matches!(err, StorageError::NotFound(_)));
     }
 

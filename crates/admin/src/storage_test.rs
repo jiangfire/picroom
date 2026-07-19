@@ -51,13 +51,13 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_against_local_driver() {
-        let dir = std::env::temp_dir().join(format!(
-            "picroom-storage-test-{}",
-            uuid::Uuid::now_v7()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("picroom-storage-test-{}", uuid::Uuid::now_v7()));
         let _ = std::fs::create_dir_all(&dir);
         let driver = LocalDriver::new(dir.clone(), "/i");
-        storage_test(&driver).await.expect("local round-trip should pass");
+        storage_test(&driver)
+            .await
+            .expect("local round-trip should pass");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

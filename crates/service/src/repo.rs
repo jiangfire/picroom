@@ -451,15 +451,13 @@ impl UserRepository for PgUserRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| ServiceError::Internal(format!("create oidc user: {e}")))?;
-        sqlx::query(
-            r"INSERT INTO oidc_links (user_id, provider, subject) VALUES ($1, $2, $3)",
-        )
-        .bind(id)
-        .bind(&new.provider)
-        .bind(&new.subject)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| ServiceError::Internal(format!("link oidc: {e}")))?;
+        sqlx::query(r"INSERT INTO oidc_links (user_id, provider, subject) VALUES ($1, $2, $3)")
+            .bind(id)
+            .bind(&new.provider)
+            .bind(&new.subject)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("link oidc: {e}")))?;
         tx.commit()
             .await
             .map_err(|e| ServiceError::Internal(format!("commit tx: {e}")))?;

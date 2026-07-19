@@ -394,7 +394,8 @@ client_secret = "csec"
 redirect_uri = "https://app.example.com/cb"
 scopes = ["openid", "email"]
 "#;
-        let path = std::env::temp_dir().join(format!("picroom-oidc-cfg-{}.toml", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("picroom-oidc-cfg-{}.toml", std::process::id()));
         std::fs::write(&path, toml).unwrap();
         let cfg = load_config_from(Some(&path)).expect("load");
         let _ = std::fs::remove_file(&path);
@@ -413,6 +414,9 @@ scopes = ["openid", "email"]
             .expect("google provider");
         assert_eq!(google.issuer, "https://accounts.google.com");
         assert_eq!(google.client_id, "cid");
-        assert_eq!(google.scopes, vec!["openid".to_string(), "email".to_string()]);
+        assert_eq!(
+            google.scopes,
+            vec!["openid".to_string(), "email".to_string()]
+        );
     }
 }

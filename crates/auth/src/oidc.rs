@@ -127,20 +127,26 @@ impl Jwks {
         };
         match key.kty.as_str() {
             "RSA" => {
-                let (n, e) = (key.n.as_deref().ok_or_else(|| {
-                    OidcError::InvalidIdToken("jwk missing n".into())
-                })?, key.e.as_deref().ok_or_else(|| {
-                    OidcError::InvalidIdToken("jwk missing e".into())
-                })?);
+                let (n, e) = (
+                    key.n
+                        .as_deref()
+                        .ok_or_else(|| OidcError::InvalidIdToken("jwk missing n".into()))?,
+                    key.e
+                        .as_deref()
+                        .ok_or_else(|| OidcError::InvalidIdToken("jwk missing e".into()))?,
+                );
                 DecodingKey::from_rsa_components(n, e)
                     .map_err(|e| OidcError::InvalidIdToken(format!("rsa key: {e}")))
             }
             "EC" => {
-                let (x, y) = (key.x.as_deref().ok_or_else(|| {
-                    OidcError::InvalidIdToken("jwk missing x".into())
-                })?, key.y.as_deref().ok_or_else(|| {
-                    OidcError::InvalidIdToken("jwk missing y".into())
-                })?);
+                let (x, y) = (
+                    key.x
+                        .as_deref()
+                        .ok_or_else(|| OidcError::InvalidIdToken("jwk missing x".into()))?,
+                    key.y
+                        .as_deref()
+                        .ok_or_else(|| OidcError::InvalidIdToken("jwk missing y".into()))?,
+                );
                 DecodingKey::from_ec_components(x, y)
                     .map_err(|e| OidcError::InvalidIdToken(format!("ec key: {e}")))
             }
@@ -557,17 +563,16 @@ mod jwks_roundtrip_tests {
             x: None,
             y: None,
         };
-        let jwks = Jwks {
-            keys: vec![jwk],
-        };
+        let jwks = Jwks { keys: vec![jwk] };
 
         // Algorithm dispatch must pick RS256 from the `alg` claim.
-        assert_eq!(Jwks::algorithm(jwks.keys.first().unwrap()), Algorithm::RS256);
+        assert_eq!(
+            Jwks::algorithm(jwks.keys.first().unwrap()),
+            Algorithm::RS256
+        );
 
         // Build a decoding key from the JWK (the exact path verify_id_token uses).
-        let decoding_key = jwks
-            .decoding_key(Some("test-key"))
-            .expect("decoding key");
+        let decoding_key = jwks.decoding_key(Some("test-key")).expect("decoding key");
 
         let claims = IdTokenClaims {
             sub: "user-123".to_string(),
@@ -594,10 +599,7 @@ mod jwks_roundtrip_tests {
         let verified = jsonwebtoken::decode::<IdTokenClaims>(&token, &decoding_key, &validation)
             .expect("verify");
         assert_eq!(verified.claims.sub, "user-123");
-        assert_eq!(
-            verified.claims.email.as_deref(),
-            Some("user@example.com")
-        );
+        assert_eq!(verified.claims.email.as_deref(), Some("user@example.com"));
     }
 
     #[test]

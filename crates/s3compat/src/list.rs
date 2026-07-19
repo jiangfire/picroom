@@ -90,9 +90,7 @@ mod tests {
     }
 
     async fn body_string(response: Response) -> String {
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 

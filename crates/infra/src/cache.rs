@@ -87,7 +87,10 @@ mod tests {
     #[tokio::test]
     async fn set_then_get_returns_stored_value() {
         let cache = InMemoryCache::new();
-        cache.set("k", b"v".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("k", b"v".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
         assert_eq!(cache.get("k").await.unwrap(), b"v");
     }
 
@@ -114,7 +117,10 @@ mod tests {
     #[tokio::test]
     async fn delete_removes_entry() {
         let cache = InMemoryCache::new();
-        cache.set("k", b"v".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("k", b"v".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
         cache.delete("k").await.unwrap();
         assert!(matches!(cache.get("k").await, Err(CacheError::Miss)));
     }

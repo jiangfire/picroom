@@ -13,8 +13,8 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use picroom_auth::{
     verify_id_token, HttpOidcClient, OidcClient, OidcError, OidcProvider, OidcUserInfo,
 };
-use picroom_infra::config::OidcProviderConfig;
 use picroom_domain::NewOidcUser;
+use picroom_infra::config::OidcProviderConfig;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;

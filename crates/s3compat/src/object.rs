@@ -147,9 +147,7 @@ mod tests {
     }
 
     async fn body_string(response: Response) -> String {
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
@@ -203,7 +201,11 @@ mod tests {
     #[tokio::test]
     async fn invalid_key_returns_bad_request() {
         let st = state();
-        let resp = get_object(State(st), Path(("bucket".into(), "/leadingslash.png".into()))).await;
+        let resp = get_object(
+            State(st),
+            Path(("bucket".into(), "/leadingslash.png".into())),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -234,7 +236,10 @@ mod tests {
         let st = state();
         let key = "img/2.jpg".to_string();
         st.storage()
-            .put(&StorageKey::parse(&key).unwrap(), Bytes::from_static(b"data"))
+            .put(
+                &StorageKey::parse(&key).unwrap(),
+                Bytes::from_static(b"data"),
+            )
             .await
             .unwrap();
         let resp = head_object(State(st), Path(("bucket".into(), key))).await;
@@ -266,12 +271,11 @@ mod tests {
             .unwrap();
         let resp = delete_object(State(st.clone()), Path(("bucket".into(), key.clone()))).await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-        assert!(
-            !st.storage()
-                .exists(&StorageKey::parse(&key).unwrap())
-                .await
-                .unwrap()
-        );
+        assert!(!st
+            .storage()
+            .exists(&StorageKey::parse(&key).unwrap())
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

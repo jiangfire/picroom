@@ -174,7 +174,10 @@ mod tests {
             lists: AtomicUsize::new(0),
         });
         let q = ImageQueryService::new(repo.clone());
-        let _ = q.list_for_owner(Uuid::now_v7(), PageReq::default()).await.unwrap();
+        let _ = q
+            .list_for_owner(Uuid::now_v7(), PageReq::default())
+            .await
+            .unwrap();
         assert_eq!(repo.lists.load(Ordering::SeqCst), 1);
     }
 

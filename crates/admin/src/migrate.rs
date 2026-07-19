@@ -54,7 +54,10 @@ pub struct MigrationStatus {
 ///
 /// This contains the entire decision logic so it can be unit-tested without a
 /// database.
-pub fn classify_migrations(known: &[KnownMigration], applied: &[AppliedMigration]) -> MigrationStatus {
+pub fn classify_migrations(
+    known: &[KnownMigration],
+    applied: &[AppliedMigration],
+) -> MigrationStatus {
     let applied_success: HashSet<i64> = applied
         .iter()
         .filter(|a| a.success)
@@ -132,12 +135,14 @@ async fn applied_migrations(db: &Database) -> Result<Vec<AppliedMigration>, Migr
 
     fn map(rows: Vec<(i64, String, bool, String)>) -> Vec<AppliedMigration> {
         rows.into_iter()
-            .map(|(version, description, success, installed_on)| AppliedMigration {
-                version,
-                description,
-                success,
-                installed_on,
-            })
+            .map(
+                |(version, description, success, installed_on)| AppliedMigration {
+                    version,
+                    description,
+                    success,
+                    installed_on,
+                },
+            )
             .collect()
     }
 

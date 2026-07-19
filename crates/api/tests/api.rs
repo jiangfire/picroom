@@ -1229,7 +1229,11 @@ fn images_app(images: Vec<Image>, with_delete: bool) -> axum::Router {
 
 #[tokio::test]
 async fn image_list_returns_items_for_owner() {
-    let img = sample_image(uuid::Uuid::now_v7(), UserId(uuid::Uuid::now_v7()), "img/a.bin");
+    let img = sample_image(
+        uuid::Uuid::now_v7(),
+        UserId(uuid::Uuid::now_v7()),
+        "img/a.bin",
+    );
     let app = images_app(vec![img], false);
     let response = app
         .oneshot(
@@ -1345,7 +1349,9 @@ async fn upload_with_team_id_associates_team() {
     let boundary = "----picroom-test-boundary";
     let mut body = Vec::new();
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"t.png\"\r\n");
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"t.png\"\r\n",
+    );
     body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
     body.extend_from_slice(&make_png(40, 30));
     body.extend_from_slice(b"\r\n");
