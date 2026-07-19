@@ -7,7 +7,7 @@
 //! key may read its bytes without authentication. Keys are unguessable
 //! (`img/{uuid_v7}.bin`), so knowing the URL is the access grant — the same
 //! model used by Lsky Pro / `EasyImage`. See `docs/spec-admin-client.md` §3.3
-//! and ADR 0007.
+//! and ADR 0008.
 
 use crate::error::ApiError;
 use crate::state::AppState;

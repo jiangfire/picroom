@@ -17,7 +17,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/healthz", get(super::handlers::system::healthz))
         .route("/readyz", get(super::handlers::system::readyz))
         .route("/metrics", get(super::handlers::system::metrics))
-        // Public image bytes ("公链") — unauthenticated; see ADR 0007.
+        // Public image bytes ("公链") — unauthenticated; see ADR 0008.
         // require_auth only enforces /api/v1/*, so this stays open.
         .route("/i/*key", get(super::handlers::public::serve_object))
         // Auth (open)
