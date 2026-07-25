@@ -40,7 +40,7 @@ pub trait StorageWriter: Send + Sync {
 
 #[async_trait]
 pub trait StorageLister: Send + Sync {
-    async fn list(&self, prefix: &StorageKey) -> Result<Page<ObjectMeta>, StorageError>;
+    async fn list(&self, prefix: Option<&StorageKey>) -> Result<Page<ObjectMeta>, StorageError>;
 }
 
 #[async_trait]

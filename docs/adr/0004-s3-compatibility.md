@@ -24,13 +24,19 @@ We implement an **AWS S3-compatible API** in v1, mounted under `/s3/`.
 Capabilities (v1):
 
 - PUT / GET / HEAD / DELETE object
-- Multipart upload (init / part / complete / abort)
 - ListObjectsV2
 - Path-style URLs (`/s3/:bucket/:key`)
-- AWS Signature V4 verification
+- AWS Signature V4 verification (enforced when `PICROOM_S3_ACCESS_KEY_ID` +
+  `PICROOM_S3_SECRET_ACCESS_KEY` are set; open otherwise)
+
+Stubbed (handlers exist but return `501 NotImplemented` so clients fall back to
+a single `PUT` rather than silently losing data — see `crates/s3compat/src/multipart.rs`):
+
+- Multipart upload (init / part / complete / abort)
 
 Capabilities (post-MVP):
 
+- Multipart upload (full implementation)
 - Server-side copy
 - Bucket lifecycle policies
 - Versioning

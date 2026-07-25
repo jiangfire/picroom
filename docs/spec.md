@@ -1,6 +1,6 @@
 # Picroom — Specification (v1.0)
 
-> **Status**: Draft for review · **Version**: 1.0.0 · **Last updated**: 2026-07-05
+> **Status**: Draft for review · **Version**: 1.0.0 · **Last updated**: 2026-07-15
 
 Picroom is a self-hosted image hosting service built for teams. It targets the gap
 between consumer-grade PHP scripts (Lsky Pro, EasyImage) and heavyweight photo
@@ -72,15 +72,15 @@ Picroom v1.0 is considered **done** when **all** of the following hold:
 
 | Layer | Choice | Version | Rationale |
 |---|---|---|---|
-| Backend | Rust | 1.75+ stable | Single binary, memory safety, async ecosystem |
+| Backend | Rust | 1.79+ stable | Single binary, memory safety, async ecosystem |
 | Async runtime | Tokio | 1.x | De facto Rust async runtime |
-| HTTP framework | axum | 0.7+ | Tower ecosystem, ergonomic, performant |
-| DB driver | sqlx | 0.7+ | Compile-time checked queries, async |
-| Frontend | Vue 3 + Vite + TypeScript | 3.4+ / 5.x | Modern, lightweight, mature |
+| HTTP framework | axum | 0.7 | Tower ecosystem, ergonomic, performant |
+| DB driver | sqlx | 0.8 | Compile-time checked queries, async |
+| Frontend | Vue 3 + Vite + TypeScript | 3.4+ / 5.x | Shipped as the Tauri admin client in `desktop/` (see `spec-admin-client.md`) |
 | SQL | PostgreSQL | 16 | JSONB, RLS, generated columns, mature |
 | Embedded SQL fallback | SQLite | 3.45+ | Zero-ops single-user mode |
 | Object storage (dev) | MinIO | latest | S3-compatible, easy to test against |
-| Image processing | libvips (via `bimg` or `image` crate) + `ravif` (AVIF) | latest | Fastest safe encoder for VIPS-family |
+| Image processing | `image` + `ravif` (AVIF) + `rgb` | 0.25 / 0.11 / 0.8 | Pure-Rust probe/resize/WebP + safe AVIF encoder (no libvips/cgo) |
 
 ### 2.2 Crate dependencies (locked to minor)
 
@@ -99,10 +99,10 @@ Picroom v1.0 is considered **done** when **all** of the following hold:
 | `time` or `chrono` | Timestamps |
 | `jsonwebtoken` | JWT (HS/RS/ES) |
 | `reqwest` | Outbound HTTP (OIDC, webhooks) |
-| `aws-sigv4` + custom S3 dispatch | AWS SigV4 signing |
-| `object_store` (optional internal) | Reference S3 client impls |
+| `quick-xml` + in-house SigV4 (`crates/s3compat`) | AWS SigV4 signing/verification (the `aws-sigv4` crates were declared but never imported and have been removed; SigV4 is implemented in-house) |
 | `ravif` | AVIF encoder |
 | `image` | Probe, resize, WebP, EXIF |
+| `rgb` | Pixel buffer bridge to `ravif` |
 | `mockall` | Mocking traits in tests |
 | `proptest` | Property-based tests |
 | `criterion` | Benchmarks |
@@ -143,28 +143,27 @@ rustup component add rustfmt clippy rust-analyzer
 docker compose up -d postgres minio
 
 # Run migrations
-cargo sqlx migrate run
+cargo run --bin picroom -- admin migrate run --config ./config/example.toml
 
 # Build everything (debug)
 cargo build --workspace
 
 # Run API (dev mode)
-cargo run --bin picroom -- api --config ./config/dev.toml
+cargo run --bin picroom -- api --config ./config/example.toml
 
 # Run worker (dev mode)
-cargo run --bin picroom -- worker --config ./config/dev.toml
+cargo run --bin picroom -- worker --config ./config/example.toml
 
-# Admin commands
-cargo run --bin picroom -- admin migrate
+# Admin commands (also: `admin migrate status`, `admin config validate`,
+# `admin storage-test --policy default`, `admin audit tail --follow`)
+cargo run --bin picroom -- admin migrate run
 cargo run --bin picroom -- admin user create --email admin@example.com --role admin
 cargo run --bin picroom -- admin audit tail --follow
 
 # Tests
 cargo test --workspace                                 # all unit + integration
-cargo test --workspace --features e2e                  # include E2E
-RUN_E2E=1 cargo test --test e2e --features e2e         # explicitly run E2E
 cargo test --doc                                       # doctests
-cargo bench --no-run                                   # compile-check benchmarks
+cargo bench --no-run                                   # compile-check benchmarks (none wired yet)
 
 # Lints / format
 cargo fmt --all
@@ -215,7 +214,9 @@ cargo tarpaulin --workspace --fail-under 80
 picroom/
 ├── Cargo.toml                       # workspace root
 ├── Cargo.lock                       # committed
-├── rust-toolchain.toml              # pinned toolchain
+├── rust-toolchain.toml              # pinned toolchain (1.79)
+├── deny.toml                        # cargo-deny: license + advisory policy
+├── tarpaulin.toml                   # coverage config
 ├── .cargo/
 │   └── config.toml                  # build settings, target-dir
 ├── .github/
@@ -224,26 +225,32 @@ picroom/
 │       └── release.yml              # tag-driven release + image push
 ├── docker/
 │   ├── Dockerfile                   # multi-stage build
-│   └── docker-compose.yml           # dev / demo stack
-├── helm/                            # K8s chart (post-MVP)
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   └── templates/
+│   ├── docker-compose.yml           # dev / demo stack (pg, minio, mailhog, migrate, api, worker)
+│   └── config.example.toml          # compose-mounted config
+├── desktop/                         # Tauri 2 admin client (standalone, NOT a workspace member — see spec-admin-client.md)
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── src/                         # Vue 3 + Pinia + Naive UI frontend
+│   └── src-tauri/                   # Rust command layer (own Cargo project)
 ├── crates/
 │   ├── api/                         # axum routes, handlers, middleware
 │   │   ├── Cargo.toml
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── router.rs
-│   │   │   ├── handlers/
-│   │   │   ├── extractors/
-│   │   │   ├── middleware/
-│   │   │   └── error.rs
+│   │   │   ├── state.rs             # AppState (composition root for handlers)
+│   │   │   ├── error.rs
+│   │   │   ├── extractors/          # auth (AuthUser, require_auth)
+│   │   │   ├── handlers/            # admin, auth, images, public, storage, system, teams
+│   │   │   └── middleware/          # auth, trace
 │   │   └── tests/
 │   ├── service/                     # use cases
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
+│   │       ├── error.rs
+│   │       ├── repo.rs              # repository traits (Image/User/Team)
 │   │       ├── upload.rs
 │   │       ├── query.rs
 │   │       ├── delete.rs
@@ -260,18 +267,19 @@ picroom/
 │   │       ├── permission.rs
 │   │       ├── storage_key.rs
 │   │       ├── page.rs
+│   │       ├── clock.rs
+│   │       ├── id.rs
 │   │       └── error.rs
 │   ├── storage/                     # Storage trait + drivers
 │   │   ├── Cargo.toml
 │   │   ├── src/
 │   │   │   ├── lib.rs
+│   │   │   ├── any.rs               # AnyStorage enum (match-dispatch)
 │   │   │   ├── driver/
-│   │   │   │   ├── mod.rs
+│   │   │   │   ├── mod.rs           # StorageReader/Writer/Lister/Signer + Storage supertrait
 │   │   │   │   ├── local.rs
 │   │   │   │   ├── s3.rs
-│   │   │   │   ├── oss.rs
-│   │   │   │   ├── cos.rs
-│   │   │   │   └── qiniu.rs
+│   │   │   │   └── minio.rs         # (oss/cos/qiniu are planned, not yet implemented)
 │   │   │   ├── signing.rs
 │   │   │   ├── contract_test.rs
 │   │   │   └── error.rs
@@ -280,22 +288,21 @@ picroom/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── processor/
-│   │       │   ├── mod.rs
-│   │       │   ├── probe.rs
-│   │       │   ├── resize.rs
-│   │       │   ├── avif.rs
-│   │       │   ├── webp.rs
-│   │       │   ├── thumbnail.rs
-│   │       │   └── watermark.rs
-│   │       └── pipeline.rs
+│   │       └── processor/
+│   │           ├── mod.rs
+│   │           ├── probe.rs
+│   │           ├── resize.rs
+│   │           ├── avif.rs
+│   │           ├── webp.rs
+│   │           ├── thumbnail.rs
+│   │           └── watermark.rs
 │   ├── auth/                        # RBAC, JWT, OIDC, API token
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── jwt.rs
 │   │       ├── oidc.rs
-│   │       ├── password.rs
+│   │       ├── password.rs          # Argon2id
 │   │       ├── api_token.rs
 │   │       └── rbac.rs
 │   ├── audit/                       # audit log
@@ -303,111 +310,145 @@ picroom/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── event.rs
-│   │       └── sink.rs
+│   │       ├── sink.rs              # AuditSink trait + NoopAuditSink
+│   │       ├── db_sink.rs           # DbAuditSink (PostgreSQL)
+│   │       └── reader.rs
 │   ├── s3compat/                    # AWS S3-compatible endpoint
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── sigv4.rs
+│   │       ├── sigv4.rs             # in-house SigV4 verification (constant-time compare)
 │   │       ├── routes.rs
 │   │       ├── bucket.rs
-│   │       └── object.rs
+│   │       ├── object.rs
+│   │       ├── list.rs              # ListObjectsV2
+│   │       ├── multipart.rs         # stubbed — returns 501 NotImplemented (post-MVP)
+│   │       ├── middleware.rs
+│   │       └── error.rs
 │   ├── worker/                      # async job consumer
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── job.rs
+│   │       ├── db_queue.rs          # SELECT ... FOR UPDATE SKIP LOCKED
+│   │       ├── pool.rs              # worker pool + retry sleep (implemented 2026-07)
+│   │       ├── processor.rs
 │   │       ├── retry.rs
 │   │       └── dlq.rs
 │   ├── infra/                       # db, cache, config, logging, telemetry
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── db.rs
+│   │       ├── db.rs                # Database enum (Postgres | Sqlite)
 │   │       ├── cache.rs
-│   │       ├── config.rs
+│   │       ├── config.rs            # figment: env > TOML > defaults
 │   │       ├── clock.rs
 │   │       ├── id.rs
-│   │       └── logging.rs
-│   └── admin/                       # CLI subcommands
+│   │       ├── logging.rs
+│   │       └── telemetry.rs         # metrics-exporter-prometheus
+│   └── admin/                       # CLI subcommands (used by bin/picroom)
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── migrate.rs
+│           ├── migrate.rs           # run + status (revert unsupported)
 │           ├── user.rs
-│           └── audit.rs
+│           ├── team.rs
+│           ├── audit_cmd.rs
+│           ├── config_cmd.rs
+│           └── storage_test.rs
 ├── bin/
-│   └── picroom/                     # single binary entry point
+│   └── picroom/                     # single binary entry point (clap)
 │       ├── Cargo.toml
 │       └── src/
-│           └── main.rs
-├── web/                             # Vue 3 frontend (optional, can be CDN)
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── index.html
-│   └── src/
-├── migrations/                      # sqlx migrations
+│           ├── main.rs              # api | worker | admin | version
+│           ├── api_cmd.rs
+│           ├── worker_cmd.rs
+│           ├── app.rs               # AppState + storage construction
+│           ├── banner.rs
+│           └── shutdown.rs          # SIGTERM/SIGINT graceful drain
+├── desktop/                         # (described above)
+├── migrations/                      # sqlx migrations (embedded via sqlx::migrate!)
 │   ├── 0001_init.sql
-│   ├── 0002_teams.sql
-│   ├── 0003_rbac.sql
-│   ├── 0004_storage_policies.sql
-│   ├── 0005_images.sql
-│   ├── 0006_audit.sql
-│   └── 0007_jobs.sql
-├── tests/                           # E2E tests (testcontainers)
-│   ├── e2e_upload.rs
-│   ├── e2e_s3_compat.rs
-│   ├── e2e_auth.rs
-│   └── e2e_quota.rs
-├── benches/                         # criterion benchmarks
-│   ├── image_encode.rs
-│   └── upload_throughput.rs
+│   ├── 0002_storage_and_images.sql
+│   ├── 0003_audit_jobs_tokens.sql
+│   ├── 0004_sessions_and_oidc.sql
+│   ├── 0005_sqlite_init.sql
+│   ├── 0006_seed_default_storage_policy.sql
+│   ├── 0007_quotas.sql
+│   └── 0008_oidc_password_nullable.sql
+├── tests/                           # shared test fixtures (E2E suite not yet wired)
+│   └── fixtures/images/sample.png
+├── benches/                         # reserved for criterion benchmarks (currently empty)
+├── config/
+│   └── example.toml                 # reference config (no dev.toml — use example.toml)
+├── scripts/                         # reserved for helper scripts (currently empty)
+├── data/                            # LocalDriver runtime data (gitignored in prod)
 ├── docs/
 │   ├── spec.md                      # this file
-│   ├── plan.md                      # implementation plan
-│   ├── tasks.md                     # task breakdown
+│   ├── spec-admin-client.md         # Tauri admin client spec
+│   ├── coverage-plan.md             # interim coverage floor + remediation
+│   ├── deployment.md
+│   ├── operations.md
+│   ├── security.md
 │   ├── adr/                         # architecture decision records
 │   │   ├── 0001-rust-and-axum.md
 │   │   ├── 0002-cargo-workspace.md
 │   │   ├── 0003-storage-trait-isp.md
 │   │   ├── 0004-s3-compatibility.md
 │   │   ├── 0005-rbac-model.md
-│   │   └── 0006-image-pipeline.md
+│   │   ├── 0006-image-pipeline.md
+│   │   ├── 0007-security-hardening.md
+│   │   └── 0008-tauri-admin-client.md
 │   └── api/
-│       └── openapi.yaml
-├── config/
-│   ├── dev.toml
-│   └── example.toml
+│       └── openapi.yaml             # hand-authored (no utoipa/codegen)
 ├── .gitignore
 ├── .dockerignore
 ├── README.md
+├── CHANGELOG.md
 ├── LICENSE                          # MIT
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
 
-### 4.1 Dependency rules (enforced by `cargo metadata` test)
+### 4.1 Dependency rules
+
+The actual internal dependency graph (verified from each crate's `Cargo.toml`):
 
 ```
-domain      ← (depends on nothing except std + thiserror)
+domain      ← (depends on nothing except std + thiserror + optional serde)
 storage     ← domain
 imaging     ← domain
 auth        ← domain
 audit       ← domain
 infra       ← domain
-service     ← domain, storage, imaging, auth, audit, infra
 worker      ← domain, storage, imaging, audit, infra
-s3compat    ← domain, storage, service, auth, audit
-api         ← service, auth, audit, infra, s3compat
-admin       ← domain, infra
-picroom     ← api, worker, admin
+service     ← domain, storage, imaging, auth, audit, worker
+s3compat    ← domain, storage, auth, audit, service
+admin       ← domain, infra, storage, auth, audit
+api         ← domain, service, auth, audit, infra, storage, s3compat, worker
+picroom     ← all eleven internal crates (composition root)
 ```
 
-Forbidden:
+Notes / deviations from the original plan:
+
+- `service` depends on `worker` (it composes the worker's job-enqueue surface
+  into its upload use case). It deliberately does **not** depend on `infra` —
+  the service layer reaches persistence through repository traits + `sqlx`
+  rather than through `infra`. This is an accepted refinement of the v1.0
+  layering; the earlier "service must not depend on worker" rule is no longer
+  in force.
+- `admin` depends on `storage`/`auth`/`audit` (not just `domain` + `infra`) so
+  the CLI can run `storage-test`, role management, and audit tail.
+- `sqlx` is depended on directly by `service`, `audit`, `worker`, and `admin`.
+  The intended long-term shape is to funnel DB access through `infra`'s ports;
+  for v1 this leakage is accepted and tracked.
+
+Still forbidden:
 
 - `domain` depending on anything except `std`, `thiserror`, optional serde.
-- `service` depending on `api` or `worker`.
+- `service` depending on `api`.
 - `storage` driver depending on `api`.
+- Any circular dependency between crates.
 
 ---
 
@@ -545,9 +586,12 @@ mod tests {
 ### 6.3 Test locations
 
 - Unit tests: in `mod tests` at the bottom of each file.
-- Integration tests: `<crate>/tests/*.rs`.
-- E2E tests: top-level `tests/*.rs`, gated by `--features e2e`.
-- Benchmarks: `benches/*.rs`, compiled but not run by default.
+- Integration tests: `<crate>/tests/*.rs` (e.g. `crates/worker/tests/db_queue.rs`,
+  `crates/api/tests/api.rs`).
+- E2E tests: a top-level `tests/` tree is reserved (currently holds only
+  `fixtures/`); the testcontainers-driven E2E suite is a tracked follow-up, not
+  yet wired — do not gate on `--features e2e`.
+- Benchmarks: `benches/*.rs` — directory reserved; no criterion targets wired yet.
 
 ### 6.4 Required test types
 
@@ -646,27 +690,50 @@ Full OpenAPI document lives at `docs/api/openapi.yaml`. Key endpoints:
 ### 8.1 REST API (`/api/v1/`)
 
 ```
+# System (public)
+GET    /healthz                                 # liveness
+GET    /readyz                                  # readiness (DB + storage probes)
+GET    /metrics                                 # Prometheus
+
+# Public image bytes ("公链" — unauthenticated; see ADR-0008)
+GET    /i/*key                                  # serve raw object bytes (Content-Type sniffed)
+
+# Auth (public)
 POST   /api/v1/auth/login                       # password login
+POST   /api/v1/auth/logout
 GET    /api/v1/auth/oidc/:provider/login         # begin OIDC login (redirect to IdP)
 GET    /api/v1/auth/oidc/:provider/callback      # OIDC callback (issues JWT)
-POST   /api/v1/auth/logout
-GET    /api/v1/me                                # current user
+
+# Images (auth required; RBAC-enforced)
+GET    /api/v1/images                            # list images (filter, page)
+POST   /api/v1/images                            # upload (multipart)
+GET    /api/v1/images/:id
+GET    /api/v1/images/:id/link                   # absolute public / presigned URL
+GET    /api/v1/images/:id/file                   # redirect to public / signed URL
+DELETE /api/v1/images/:id
+
+# Teams (auth required)
 POST   /api/v1/teams                             # create team
+GET    /api/v1/teams                             # list teams
 GET    /api/v1/teams/:id
 POST   /api/v1/teams/:id/members
-GET    /api/v1/images                            # list images (filter, page)
-POST   /api/v1/images                            # upload (multipart or json)
-GET    /api/v1/images/:id
-GET    /api/v1/images/:id/file                   # redirect to storage URL
-GET    /api/v1/images/:id/thumbnail              # auto-generated thumbnail
-GET    /api/v1/images/:id/avif                   # AVIF variant
-GET    /api/v1/images/:id/webp                   # WebP variant
-DELETE /api/v1/images/:id
-GET    /api/v1/audit                             # admin: audit log
-POST   /api/v1/admin/users                       # admin: create user
+GET    /api/v1/teams/:id/members                 # list members
+
+# Admin (auth required; admin role)
+POST   /api/v1/admin/users                       # create user
+GET    /api/v1/admin/users                       # list users (paginated)
 PATCH  /api/v1/admin/users/:id/role
-POST   /api/v1/admin/storage/policies
+POST   /api/v1/admin/users/:id/disable
+POST   /api/v1/admin/users/:id/enable
+GET    /api/v1/audit                             # audit log
+GET    /api/v1/admin/storage/policies            # list storage policies
+POST   /api/v1/admin/storage/policies            # create storage policy
 ```
+
+> Variant endpoints (`/avif`, `/webp`, `/thumbnail`) are **not** exposed as
+> separate routes; variants are served through the same unauthenticated
+> `GET /i/<variant-key>` route (see ADR-0008). A `GET /api/v1/me` endpoint is
+> not implemented.
 
 ### 8.2 S3-compatible API (`/s3/`)
 
@@ -675,13 +742,16 @@ PUT    /s3/:bucket/:key
 GET    /s3/:bucket/:key
 HEAD   /s3/:bucket/:key
 DELETE /s3/:bucket/:key
-POST   /s3/:bucket/:key?uploads                 # multipart init
-PUT    /s3/:bucket/:key?partNumber=N&uploadId=U # multipart part
-POST   /s3/:bucket/:key?uploadId=U              # multipart complete
+POST   /s3/:bucket/:key?uploads                 # multipart init      → 501 (stubbed)
+PUT    /s3/:bucket/:key?partNumber=N&uploadId=U # multipart part      → 501 (stubbed)
+POST   /s3/:bucket/:key?uploadId=U              # multipart complete  → 501 (stubbed)
+DELETE /s3/:bucket/:key?uploadId=U              # multipart abort     → 501 (stubbed)
 GET    /s3/:bucket                               # list (v2)
 ```
 
-SigV4 signing; path-style addressing.
+SigV4 signing; path-style addressing. Multipart handlers exist but return an
+explicit `501 NotImplemented` XML error so well-behaved clients fall back to a
+single `PUT` rather than silently losing data (post-MVP, see ADR-0004).
 
 ### 8.3 Health and metrics
 
@@ -802,7 +872,7 @@ pub trait StorageWriter: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait StorageLister: Send + Sync {
-    async fn list(&self, prefix: &StorageKey) -> Result<Page<ObjectMeta>, StorageError>;
+    async fn list(&self, prefix: Option<&StorageKey>) -> Result<Page<ObjectMeta>, StorageError>;
 }
 
 #[async_trait::async_trait]
@@ -816,14 +886,15 @@ pub trait Storage: StorageReader + StorageWriter + StorageLister + StorageSigner
 pub enum AnyStorage {
     Local(LocalDriver),
     S3(S3Driver),
-    Oss(OssDriver),
-    Cos(CosDriver),
-    Qiniu(QiniuDriver),
     Minio(MinioDriver),
 }
 
 impl Storage for AnyStorage { /* dispatch via match */ }
 ```
+
+> `Oss` / `Cos` / `Qiniu` variants are planned (ADR-0003) but not yet
+> implemented; only `Local`, `S3`, and `Minio` ship today. `MinioDriver` is a
+> thin specialization of the S3 path-style client.
 
 ---
 
@@ -848,23 +919,28 @@ Brings up: API, worker, PostgreSQL, MinIO. Single port (8080) exposed.
 
 ### 13.3 Configuration
 
-Loaded from environment variables (prefix `PICROOM_`) with optional TOML override:
+Loaded from environment variables (prefix `PICROOM_`, `__` separates nesting)
+with optional TOML override. A commented reference file lives at
+`config/example.toml`; the salient sections:
 
 ```toml
-# config/example.toml
 [server]
 bind_addr = "0.0.0.0:8080"
 request_timeout_secs = 30
+graceful_shutdown_secs = 30
+max_body_mb = 100
+# public_url_base = "https://cdn.example.com"   # absolute base for /link & /file
 
 [database]
 url = "postgres://picroom:secret@localhost/picroom"
 max_connections = 20
+min_connections = 2
 
 [storage]
 default = "primary"
 
 [storage.policies.primary]
-driver = "s3"
+driver = "s3"                                   # local | s3 | minio
 bucket = "picroom-prod"
 endpoint = "https://s3.amazonaws.com"
 region = "us-east-1"
@@ -878,9 +954,17 @@ generate_thumbnail = true
 strip_exif = true
 max_dimension = 8192
 
+[auth]
+allow_signup = false
+password_min_length = 12
+jwt_secret = "change-me"                        # MUST be overridden in prod (release builds refuse to start)
+jwt_issuer = "picroom"
+jwt_audience = "picroom-api"
+jwt_ttl_secs = 3600
+
 [auth.oidc]
-admin_emails = ["admin@example.com"]    # emails promoted to `admin` on first OIDC login
-secure_cookies = true                   # set false only for local HTTP dev (no TLS)
+admin_emails = ["admin@example.com"]            # emails promoted to `admin` on first OIDC login
+secure_cookies = true                           # set false only for local HTTP dev (no TLS)
 
 [auth.oidc.providers.google]
 issuer = "https://accounts.google.com"
@@ -890,9 +974,32 @@ redirect_uri = "https://picroom.example.com/api/v1/auth/oidc/google/callback"
 scopes = ["openid", "email", "profile"]
 
 [quota]
-default_user_bytes = 10737418240       # 10 GiB
-default_team_bytes = 1099511627776     # 1 TiB
+default_user_bytes = 10737418240                # 10 GiB
+default_team_bytes = 1099511627776              # 1 TiB
+soft_limit_warning = 0.9
+hard_limit_enforce = true
+
+[rate_limit]
+per_user_rps = 10
+per_user_burst = 20
+per_ip_rps = 50
+per_ip_burst = 100
+
+[audit]
+retention_days = 365
+
+[logging]
+level = "info"
+format = "json"                                 # "json" or "pretty"
+
+[telemetry]
+metrics_enabled = true
+# otlp_endpoint = "http://localhost:4317"
 ```
+
+Two additional env vars govern the S3-compat surface: `PICROOM_S3_ACCESS_KEY_ID`
+and `PICROOM_S3_SECRET_ACCESS_KEY` — when both are set, every `/s3/*` request is
+run through SigV4 verification; otherwise the endpoint is open (dev only).
 
 Environment variables win over TOML; TOML wins over defaults.
 
@@ -938,9 +1045,8 @@ Items that remain unresolved and require decision before implementation:
 
 ## 16. References
 
-- 竞品分析: internal `docs/competitor-analysis.md` (in repo root, generated
-  before this spec).
-- Architecture review: covered in §1 of this document + ADR series.
+- 竞品分析: internal competitor analysis (produced during scoping; preserved in git history, not in-tree).
+- Architecture review: covered in §1 of this document + the ADR series (`docs/adr/`).
 - Immich architecture (for reference): https://github.com/immich-app/immich
 - Lsky Pro (for reference): https://github.com/lsky-org/lsky-pro
 - AWS SigV4 reference: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html

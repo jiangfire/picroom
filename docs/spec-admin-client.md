@@ -127,9 +127,12 @@ All backend changes reuse the existing stack (axum, sqlx, the `Storage` trait,
   (`service/src/upload.rs:167`). UUID v7 is unguessable, so knowing the URL is
   the access grant — same model as Lsky/EasyImage.
 - The server serves raw bytes at `GET /i/:key` **without** auth.
-- Content-Type is determined by **magic-byte sniffing** (`image::guess_format`
-  on the leading bytes), because keys carry no extension (`.bin`) and the route
-  must work for variants (avif/webp/thumb) without per-object DB lookups.
+- Content-Type is determined by **dependency-free magic-byte sniffing**
+  (JPEG/PNG/GIF/WebP/AVIF via leading bytes + the `ftyp` box brand; see
+  `crates/api/src/handlers/public.rs::sniff_content_type`), because keys carry
+  no extension (`.bin`) and the route must work for variants (avif/webp/thumb)
+  without per-object DB lookups. The `image` crate is deliberately not pulled
+  into the API production deps for this (see ADR-0008).
 - `GET /api/v1/images/:id/link` returns the absolute public URL built from the
   server's configured `server.public_url_base` (falls back to the request's
   `Host`). For S3-backed storage, the same endpoint returns a presigned URL
@@ -265,7 +268,7 @@ picroom/
 ├── crates/infra/src/config.rs        # +public_url_base
 └── docs/
     ├── spec-admin-client.md          # this file
-    ├── adr/0007-tauri-admin-client.md # NEW — records architecture decisions
+    ├── adr/0008-tauri-admin-client.md # NEW — records architecture decisions
     └── api/openapi.yaml               # updated
 ```
 
@@ -332,8 +335,10 @@ use std::sync::Arc;
 
 /// `GET /i/:key` — serve raw object bytes with no auth.
 ///
-/// Content-Type is sniffed from the leading bytes via `image::guess_format`,
-/// because upload keys are `img/{uuid}.bin` and carry no extension.
+/// Content-Type is sniffed from the leading magic bytes via a dependency-free
+/// matcher (JPEG/PNG/GIF/WebP/AVIF), because upload keys are `img/{uuid}.bin`
+/// and carry no extension. The `image` crate is intentionally not used here
+/// (ADR-0008).
 pub async fn serve_object(
     State(state): State<Arc<AppState>>,
     Path(key_raw): Path<String>,
@@ -358,15 +363,26 @@ pub async fn serve_object(
         .into_response())
 }
 
+/// Dependency-free Content-Type sniffer (no `image` crate).
 fn sniff_content_type(b: &[u8]) -> &'static str {
-    match image::guess_format(b).ok() {
-        Some(image::ImageFormat::Jpeg) => "image/jpeg",
-        Some(image::ImageFormat::Png) => "image/png",
-        Some(image::ImageFormat::WebP) => "image/webp",
-        Some(image::ImageFormat::Avif) => "image/avif",
-        Some(image::ImageFormat::Gif) => "image/gif",
-        _ => "application/octet-stream",
+    if b.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if b.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        "image/png"
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        "image/webp"
+    } else if is_avif(b) {
+        "image/avif"
+    } else {
+        "application/octet-stream"
     }
+}
+
+/// AVIF/HEIF detection via the ISO-BMFF `ftyp` box brand at bytes 8..12.
+fn is_avif(b: &[u8]) -> bool {
+    b.len() >= 12 && &b[4..8] == b"ftyp" && matches!(&b[8..12], b"avif" | b"avis" | b"mif1")
 }
 ```
 
@@ -486,7 +502,7 @@ The feature is **done** when all of the following hold:
 | C7 | Client can download an image to a chosen folder via native dialog | manual |
 | C8 | Client can list users, change a role, disable a user, list teams + members, list/create storage policies, page through audit log | manual |
 | C9 | A 401 from the server redirects the client to login and clears the stored token | vitest + manual |
-| C10 | `docs/api/openapi.yaml` + a new ADR (`0007-tauri-admin-client.md`) are committed | `git diff` |
+| C10 | `docs/api/openapi.yaml` + a new ADR (`0008-tauri-admin-client.md`) are committed | `git diff` |
 | C11 | No new clippy/test failures introduced in the workspace; client `npm run lint` clean | commands |
 
 ---

@@ -24,7 +24,7 @@ bin/
   picroom/                  # single binary entry
 ```
 
-Dependency rules:
+Dependency rules (current, verified from each crate's `Cargo.toml`):
 
 ```
 domain    ← (only std + thiserror + optional serde)
@@ -33,22 +33,33 @@ imaging   ← domain
 auth      ← domain
 audit     ← domain
 infra     ← domain
-service   ← domain, storage, imaging, auth, audit, infra
 worker    ← domain, storage, imaging, audit, infra
-s3compat  ← domain, storage, service, auth, audit
-api       ← service, auth, audit, infra, s3compat
-admin     ← domain, infra
-picroom   ← api, worker, admin
+service   ← domain, storage, imaging, auth, audit, worker
+s3compat  ← domain, storage, auth, audit, service
+admin     ← domain, infra, storage, auth, audit
+api       ← domain, service, auth, audit, infra, storage, s3compat, worker
+picroom   ← all eleven internal crates (composition root)
 ```
 
 Forbidden:
 
 - `domain` depending on anything except std + thiserror (+ optional serde).
-- `service` depending on `api` or `worker`.
+- `service` depending on `api`.
 - `storage` driver depending on `api`.
+- Any circular dependency between crates.
 
-These rules are enforced by an integration test that runs `cargo metadata`
-and asserts the dependency graph.
+> **Layering refinements since the original decision.** `service` now depends
+> on `worker` (it composes the worker's enqueue surface into the upload use
+> case) and intentionally does **not** depend on `infra` — it reaches
+> persistence via repository traits + `sqlx` instead. `admin` additionally
+> depends on `storage`/`auth`/`audit` so the CLI can run `storage-test`, role
+> management, and `audit tail`. The original "service must not depend on
+> worker" rule is therefore relaxed.
+
+These rules are intended to be enforced by an integration test that runs
+`cargo metadata` and asserts the dependency graph; that test is **not yet
+implemented** (tracked follow-up). Until it lands, the graph above is the
+authoritative reference and is reconciled against `docs/spec.md` §4.1.
 
 ## Consequences
 

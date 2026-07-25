@@ -7,10 +7,13 @@ root or the binary on `PATH`.
 
 ```bash
 picroom admin migrate run      # apply pending migrations (idempotent)
+picroom admin migrate status   # list applied / pending / failed migrations
 ```
 
-`migrate revert` and `migrate status` are not yet wired (the binary returns a
-clear "not implemented" error). To inspect state manually:
+`migrate status` reads the embedded migration set against the
+`_sqlx_migrations` table and reports applied, pending, and failed rows.
+`migrate revert` is **not** supported (no down-migrations are shipped — the
+binary returns a clear error). To inspect state manually:
 
 ```sql
 SELECT version, description, success FROM _sqlx_migrations ORDER BY version;

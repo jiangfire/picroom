@@ -28,7 +28,8 @@ We use **Rust + axum + Tokio** for the backend.
   (single-file + docker), per 12-Factor §5/§9.
 - Compile-time guarantees (ownership + lifetimes + sqlx compile-time check)
   reduce runtime errors and security holes.
-- Native access to libvips via `bimg` or `image` crate → fast image pipeline.
+- Native access to image processing via the pure-Rust `image` + `ravif`
+  crates → fast image pipeline with no libvips/cgo dependency (see Amendment).
 - Tokio is the most mature async runtime in Rust; axum builds on Tower
   middleware which gives us battle-tested auth/tracing/rate-limit modules.
 
@@ -60,3 +61,12 @@ We use **Rust + axum + Tokio** for the backend.
 - [tokio.rs](https://tokio.rs/)
 - [axum docs](https://docs.rs/axum/)
 - Internal: `docs/spec.md` §2.1, §3
+
+## Amendment (2026-07-15)
+
+The original Context and Consequences referenced **libvips** (via `bimg`) as the
+image-processing path. During implementation we went with the pure-Rust stack
+`image` (probe/resize/WebP/EXIF) + `ravif` (AVIF) + `rgb`, dropping the libvips
+dependency to avoid a cgo/native FFI dependency and keep the build hermetic.
+The decision (Rust + axum + Tokio) is unchanged; only the image-library choice
+narrowed from "libvips or image" to "image + ravif".

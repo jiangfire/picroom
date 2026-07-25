@@ -17,6 +17,7 @@ The compose stack brings up:
 |---|---|---|
 | `postgres` | PostgreSQL 16 (metadata, jobs, audit) | 127.0.0.1:5432 |
 | `minio` | S3-compatible object storage | 127.0.0.1:9000 (API), :9001 (console) |
+| `mailhog` | Dev SMTP catch-all (outbound mail capture) | 127.0.0.1:1025 (SMTP), :8025 (UI) |
 | `migrate` | One-shot: applies SQL migrations before app start | — |
 | `api` | HTTP API + S3-compatible endpoint | 8080 |
 | `worker` | Async image-processing consumer | — |
