@@ -190,3 +190,61 @@ jobs:
           files: picroom-${{ steps.version.outputs.version }}-${{ matrix.name }}.${{ matrix.asset_ext }}
           generate_release_notes: true
           draft: false
+
+  # ---------------------------------------------------------------------
+  # Build the Tauri Windows admin client installer (NSIS + MSI) and attach
+  # it to the GitHub Release. Runs on the GitHub-hosted Windows runner, so
+  # no local Windows SDK / build machine is required (Task 3.4 of the
+  # admin-client plan).
+  #
+  # Authenticode code signing is enabled automatically when the repo secrets
+  # WINDOWS_CERTIFICATE (base64 of a .p12/.pfx) + WINDOWS_CERTIFICATE_PASSWORD
+  # are set. Until then the job builds UNSIGNED installers (SmartScreen warns).
+  #
+  # NOTE: MSI bundling needs the WiX toolset. windows-latest ships WiX, but if
+  # the MSI step ever fails with "light.exe not found", either add a
+  # `choco install wixtoolset` step before this one, or drop to `--bundles nsis`.
+  # ---------------------------------------------------------------------
+  desktop:
+    name: desktop (windows-x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: windows-msvc
+
+      - name: Build + sign + bundle (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          projectPath: desktop
+          args: --target x86_64-pc-windows-msvc --bundles nsis,msi
+
+      - name: Attach to release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+          generate_release_notes: true
+          draft: false

@@ -150,10 +150,12 @@ testable in a single command. Strike-through = done.
 - ~~`docs/tasks-admin-client.md` exists (this file)~~
 - **Verify**: `git diff --stat`
 
-### Task 3.4: Tauri build produces Windows installer (manual) ⏳
-- [ ] `cd desktop && npm run tauri build` succeeds
-- [ ] Produces MSI/NSIS under `desktop/src-tauri/target/release/bundle/`
-- **Blocked on**: Windows SDK + ~10 min compile time; manual smoke
+### Task 3.4: Tauri Windows installer via GitHub Actions ⏳
+- [ ] Push a `v*.*.*` tag → `release.yml` `desktop` job builds NSIS + MSI on `windows-latest` and attaches both to the GitHub Release
+- [ ] Authenticode signing active once `WINDOWS_CERTIFICATE` (base64 `.p12`) + `WINDOWS_CERTIFICATE_PASSWORD` repo secrets are set; absent → unsigned build (SmartScreen warns)
+- **Verify**: `gh release view <tag>` lists `*.exe` (NSIS) + `*.msi` under Assets
+- **Prereq**: enable the workflow in repo **Actions settings** (was disabled — `ci.yml` had 0 runs) and add the signing secret
+- **Unblocked**: no local Windows SDK — `windows-latest` provides VS Build Tools + Windows SDK + WiX/NSIS; `swatinem/rust-cache` + npm cache cut the ~10 min first build
 
 ### Task 3.5: End-to-end smoke (manual) ⏳
 Steps from `spec-admin-client.md` §6.3:

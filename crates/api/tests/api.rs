@@ -778,9 +778,7 @@ async fn image_link_forbids_viewer_accessing_others_image() {
 
     // Token with no roles (no Image/Read permission) → 403.
     let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
-    let token = jwt
-        .issue_with_scopes(uuid::Uuid::now_v7(), &[])
-        .unwrap();
+    let token = jwt.issue_with_scopes(uuid::Uuid::now_v7(), &[]).unwrap();
     let response = app
         .oneshot(
             Request::builder()
@@ -821,7 +819,10 @@ async fn image_link_allows_viewer_accessing_others_image() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["public_url"], "https://cdn.example.com/i/img/viewer.bin");
+    assert_eq!(
+        json["public_url"],
+        "https://cdn.example.com/i/img/viewer.bin"
+    );
 }
 
 // ---------------------------------------------------------------------------
