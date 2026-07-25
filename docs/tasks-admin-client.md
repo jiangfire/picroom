@@ -2,7 +2,7 @@
 
 > **Status**: Phase 1 + Phase 2 shipped; Phase 3 in progress
 > **Parent**: [`plan-admin-client.md`](plan-admin-client.md) · [`spec-admin-client.md`](spec-admin-client.md)
-> **Last updated**: 2026-07-19
+> **Last updated**: 2026-07-25
 
 Each task maps to one vertical slice and is sized S/M. Acceptance criteria are
 testable in a single command. Strike-through = done.
@@ -100,6 +100,7 @@ testable in a single command. Strike-through = done.
 
 ### ~~Task 2.9: ImagesView (core image flow)~~ ✅
 - ~~List images (paginated `n-data-table`)~~
+- ~~UI split into `src/components/{UploadDropzone,ImageGrid,CopyLinkButton}.vue`; `ImagesView.vue` is a thin composition root~~ (2026-07-25)
 - ~~Drag-drop upload via `webview.onDragDropEvent`~~
 - ~~"Copy link" button → `writeText` to clipboard~~
 - ~~"Download" button → native `save()` dialog → `invoke('download_image')`~~
@@ -124,6 +125,13 @@ testable in a single command. Strike-through = done.
 - **Verify**: `cd desktop && npm run build`
 
 ## Phase 3 — Polish (Definition of Done)
+
+### ~~Task 3.0: Spec-alignment refactor~~ ✅ (2026-07-25)
+- ~~Extract `src/components/{UploadDropzone,ImageGrid,CopyLinkButton}.vue` from `ImagesView.vue`~~
+- ~~Split `desktop/src-tauri/src/{error,state,store}.rs`; delete `config.rs`~~
+- ~~`link`/`file` RBAC corrected to `Image/Read` (spec §4.1); add positive viewer test, negative test now uses empty-scope token~~
+- ~~`auth.rs::login` profile name derived from server host (multi-profile)~~
+- **Verify**: `cargo test -p picroom-api` (41 pass) · `npm run lint` + `npm test` (2/2) · `cargo clippy`/`test` on src-tauri (4/4)
 
 ### Task 3.1: Workspace fmt clean ⏳
 - [ ] `cargo fmt --all -- --check` exits 0

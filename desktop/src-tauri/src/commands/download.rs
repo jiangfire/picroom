@@ -6,7 +6,7 @@
 use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 
-use crate::config;
+use crate::store;
 
 /// Resolves the public URL for an image and streams the bytes to `save_path`.
 async fn perform_download(
@@ -63,8 +63,8 @@ pub async fn download_image(
     app: AppHandle,
     image_id: String,
     save_path: String,
-) -> Result<(), String> {
-    let profile = config::load_active_profile(&app)?;
+) -> crate::error::Result<()> {
+    let profile = store::load_active_profile(&app)?;
     let profile = profile.ok_or("no active profile")?;
     let token = profile.token.as_ref().ok_or("not logged in")?;
 
@@ -75,7 +75,8 @@ pub async fn download_image(
         &save_path,
         &reqwest::Client::new(),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

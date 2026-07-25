@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
+use crate::error::{Error, Result};
+
 const STORE_NAME: &str = "settings.json";
 const PROFILES_KEY: &str = "profiles";
 const ACTIVE_KEY: &str = "active_profile";
@@ -26,8 +28,8 @@ pub struct Profile {
 }
 
 /// Loads the saved profiles list, or an empty vector if none exists.
-pub fn load_profiles<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Profile>, String> {
-    let store = app.store(STORE_NAME).map_err(|e| e.to_string())?;
+pub fn load_profiles<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Profile>> {
+    let store = app.store(STORE_NAME).map_err(|e| Error(e.to_string()))?;
     let profiles = store
         .get(PROFILES_KEY)
         .and_then(|v| serde_json::from_value::<Vec<Profile>>(v.clone()).ok())
@@ -36,16 +38,16 @@ pub fn load_profiles<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Profile>, Str
 }
 
 /// Saves the entire profile list to disk.
-pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile]) -> Result<(), String> {
-    let store = app.store(STORE_NAME).map_err(|e| e.to_string())?;
-    let value = serde_json::to_value(profiles).map_err(|e| e.to_string())?;
+pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile]) -> Result<()> {
+    let store = app.store(STORE_NAME).map_err(|e| Error(e.to_string()))?;
+    let value = serde_json::to_value(profiles).map_err(|e| Error(e.to_string()))?;
     store.set(PROFILES_KEY, value);
-    store.save().map_err(|e| e.to_string())
+    store.save().map_err(|e| Error(e.to_string()))
 }
 
 /// Returns the active profile name, if any.
-pub fn active_profile_name<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, String> {
-    let store = app.store(STORE_NAME).map_err(|e| e.to_string())?;
+pub fn active_profile_name<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>> {
+    let store = app.store(STORE_NAME).map_err(|e| Error(e.to_string()))?;
     Ok(store
         .get(ACTIVE_KEY)
         .and_then(|v| v.as_str().map(String::from)))
@@ -55,14 +57,14 @@ pub fn active_profile_name<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Stri
 pub fn set_active_profile_name<R: Runtime>(
     app: &AppHandle<R>,
     name: Option<&str>,
-) -> Result<(), String> {
-    let store = app.store(STORE_NAME).map_err(|e| e.to_string())?;
+) -> Result<()> {
+    let store = app.store(STORE_NAME).map_err(|e| Error(e.to_string()))?;
     store.set(ACTIVE_KEY, serde_json::json!(name));
-    store.save().map_err(|e| e.to_string())
+    store.save().map_err(|e| Error(e.to_string()))
 }
 
 /// Returns the currently active profile, if any.
-pub fn load_active_profile<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Profile>, String> {
+pub fn load_active_profile<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Profile>> {
     let profiles = load_profiles(app)?;
     let active = active_profile_name(app)?;
     Ok(active.and_then(|name| profiles.into_iter().find(|p| p.name == name)))

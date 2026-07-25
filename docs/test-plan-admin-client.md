@@ -2,7 +2,7 @@
 
 > **Status**: Active · **Parent**: [`spec-admin-client.md`](spec-admin-client.md) §8, §10
 > **Companion**: [`plan-admin-client.md`](plan-admin-client.md) · [`tasks-admin-client.md`](tasks-admin-client.md)
-> **Last updated**: 2026-07-19
+> **Last updated**: 2026-07-25
 
 ## 1. Purpose
 
@@ -34,7 +34,8 @@ Coverage reference: spec §8.1 (server), §8.2 (client), §8.3 (thresholds).
 | 8.1 | `/api/v1/*` still requires auth (regression) | C1 | `api_rejects_missing_token`, `api_rejects_forged_token`, `api_rejects_token_signed_with_wrong_secret` | ✅ |
 | 8.1 | `/images/:id/link` absolute URL | C2 | `image_link_returns_absolute_public_url` | ✅ |
 | 8.1 | `/images/:id/link` relative URL when base unset | C2 | `image_link_returns_relative_url_when_base_unset` | ✅ |
-| 8.1 | `/images/:id/link` IDOR denies viewer | C2 | `image_link_forbids_viewer_accessing_others_image` | ✅ |
+| 8.1 | `/images/:id/link` denies token without `Image/Read` (empty scope) | C2 | `image_link_forbids_viewer_accessing_others_image` | ✅ |
+| 8.1 | `/images/:id/link` allows viewer (has `Image/Read`) to link others' images | C2 | `image_link_allows_viewer_accessing_others_image` | ✅ (added 2026-07-25) |
 | 8.1 | `/images/:id/file` 302 redirect | — | `image_file_redirects_to_public_url`, `image_file_returns_404_for_unknown_image` | ✅ |
 | 8.1 | admin users list + RBAC | C3 | `admin_list_users_returns_users_for_admin`, `admin_list_users_forbids_non_admin` | ✅ |
 | 8.1 | admin disable/enable user | C3 | `admin_disable_user_returns_204`, `admin_disable_user_rejects_invalid_id` | ✅ |
@@ -201,6 +202,16 @@ cd desktop && npm run tauri dev
 | 1.4 test | `cd desktop && cargo test --manifest-path src-tauri/Cargo.toml` | ✅ 4/4 pass |
 | 2.1 PG | docker unavailable on host; deferred to CI | ⏸ blocked |
 | 2.3 build | `cd desktop && npm run tauri build` | ✅ MSI 6.06 MB + NSIS 4.15 MB |
+
+### 2026-07-25 — RBAC correction + doc sync
+
+| Step | Change | Result |
+|---|---|---|
+| 8.1 link RBAC | gate changed `owner OR Image/Update` → `owner OR Image/Read` (spec §4.1) | ✅ code + spec aligned |
+| 8.1 test | `image_link_forbids_viewer_accessing_others_image` now uses empty-scope token (no `Image/Read`) → 403; added `image_link_allows_viewer_accessing_others_image` (viewer → 200) | ✅ `cargo test -p picroom-api` 41 pass |
+| 1.3 lint | `cd desktop && npm run lint` (components extracted) | ✅ exit 0 |
+| 1.3 test | `cd desktop && npm run test` | ✅ 2/2 pass |
+| 1.4 clippy/test | `cd desktop && cargo clippy --all-targets` / `cargo test` (modules split) | ✅ 4/4 pass |
 
 ## 10. Decisions deferred (out of scope for this pass)
 

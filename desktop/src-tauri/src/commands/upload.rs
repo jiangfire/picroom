@@ -13,7 +13,7 @@ use tauri::AppHandle;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
-use crate::config;
+use crate::store;
 
 /// Progress event emitted during an upload.
 #[derive(Clone, Serialize)]
@@ -145,12 +145,12 @@ pub async fn upload_file(
     file_path: String,
     team_id: Option<String>,
     on_progress: Channel<UploadProgress>,
-) -> Result<serde_json::Value, String> {
-    let profile = config::load_active_profile(&app)?;
+) -> crate::error::Result<serde_json::Value> {
+    let profile = store::load_active_profile(&app)?;
     let profile = profile.ok_or("no active profile")?;
     let token = profile.token.as_ref().ok_or("not logged in")?;
 
-    perform_upload(
+    Ok(perform_upload(
         &profile.server_url,
         token,
         &file_path,
@@ -158,7 +158,7 @@ pub async fn upload_file(
         on_progress,
         &reqwest::Client::new(),
     )
-    .await
+    .await?)
 }
 
 #[cfg(test)]

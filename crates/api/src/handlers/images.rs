@@ -246,7 +246,8 @@ pub async fn delete(
 /// caller resolves against the server it is talking to.
 ///
 /// Access uses the same IDOR gate as `GET /images/:id`: the owner, or any
-/// principal with the `Image/Update` permission (manager/admin via RBAC).
+/// principal with the `Image/Read` permission (viewer/uploader/manager/admin
+/// via RBAC).
 pub async fn link(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -259,7 +260,7 @@ pub async fn link(
     if auth.user_id != image.owner_id
         && state
             .permissions
-            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Read)
             .is_err()
     {
         return Err(ApiError::forbidden("not allowed"));
@@ -289,7 +290,7 @@ pub async fn file(
     if auth.user_id != image.owner_id
         && state
             .permissions
-            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
+            .check(&auth.roles, ResourceType::Image, PermissionAction::Read)
             .is_err()
     {
         return Err(ApiError::forbidden("not allowed"));

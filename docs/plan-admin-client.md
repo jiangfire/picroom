@@ -1,7 +1,7 @@
 # Implementation Plan: Picroom Tauri Admin Client
 
 > **Status**: Implemented (Phase 1 + Phase 2 complete) · **Parent**: [`spec-admin-client.md`](spec-admin-client.md)
-> **Last updated**: 2026-07-19
+> **Last updated**: 2026-07-25
 
 ## Overview
 
@@ -66,10 +66,10 @@ Vertical slice per row; each row ships its own axum integration test.
 | 2.3 | Rust command layer: `auth::{login,logout,get_session,list_profiles,save_profile,set_active_profile,remove_profile}` | ✅ | `commands/auth.rs` (199 LOC, 2 wiremock tests) |
 | 2.4 | Rust command layer: `upload_file` (streaming multipart + progress channel) | ✅ | `commands/upload.rs` (189 LOC, 1 wiremock test) |
 | 2.5 | Rust command layer: `download_image` (stream-to-disk, relative + absolute URLs) | ✅ | `commands/download.rs` (139 LOC, 1 wiremock test) |
-| 2.6 | Profile persistence via `tauri-plugin-store` | ✅ | `desktop/src-tauri/src/config.rs` |
+| 2.6 | Profile persistence via `tauri-plugin-store` | ✅ | `desktop/src-tauri/src/store.rs` (Profile + persistence), `state.rs` (login session) |
 | 2.7 | Frontend `api/*` modules + Bearer-injecting client | ✅ | `desktop/src/api/{client,images,users,teams,audit,storage}.ts` |
 | 2.8 | `LoginView` + `router` auth guard + `stores/auth` Pinia | ✅ | `desktop/src/views/LoginView.vue`, `stores/auth.ts` |
-| 2.9 | `ImagesView`: list, drag-drop upload, copy link, download, delete | ✅ | `desktop/src/views/ImagesView.vue` (253 LOC) |
+| 2.9 | `ImagesView` + extracted `components/{UploadDropzone,ImageGrid,CopyLinkButton}.vue`: list, drag-drop upload, copy link, download, delete | ✅ | `desktop/src/views/ImagesView.vue` + `desktop/src/components/*.vue` |
 | 2.10 | `UsersView` + `TeamsView` + `StorageView` + `AuditView` | ✅ | `desktop/src/views/*.vue` |
 | 2.11 | `SettingsView` with multi-profile switch/activate/delete | ✅ | `desktop/src/views/SettingsView.vue` (spec §11 OQ3 ✓) |
 | 2.12 | `App.vue` shell + Naive UI layout + menu + logout | ✅ | `desktop/src/App.vue` |
@@ -108,24 +108,40 @@ Vertical slice per row; each row ships its own axum integration test.
 
 ## Deviations from spec (intentional, documented)
 
-These choices diverge from the spec's literal file/structure layout but deliver
-the same functionality with less code. Recorded here so reviewers don't flag
-them as gaps:
+Items 1–2 below were **resolved on 2026-07-25** — the code was refactored to
+match the spec layout exactly. Items 3–4 remain deliberate deviations from the
+spec's literal file/structure layout but deliver the same functionality.
 
-1. **`state.rs` / `store.rs` / `error.rs` collapsed into `config.rs`** (spec §5).
-   The managed state is a single `reqwest::Client` constructed per-command; the
-   store helpers live in `config.rs`; command errors use `Result<_, String>`
-   which Tauri serializes directly. Splitting would add files without adding
-   clarity at the current size.
-2. **`components/{UploadDropzone,ImageGrid,CopyLinkButton}.vue` inlined into
-   `ImagesView.vue`** (spec §5). Each would have exactly one caller; extraction
-   is warranted only when a second consumer appears.
+1. ~~**`state.rs` / `store.rs` / `error.rs` collapsed into `config.rs`** (spec §5)~~
+   **RESOLVED 2026-07-25.** `desktop/src-tauri/src/` now ships the three modules
+   per spec: `error.rs` (`Error` newtype + `Result<T>` + `From` impls),
+   `store.rs` (Profile + `tauri-plugin-store` persistence), `state.rs` (login
+   `Session`/`LoginPayload`/`LoginResult` + `perform_login`). The former
+   `config.rs` was deleted; `upload.rs`/`download.rs`/`auth.rs` now return
+   `crate::error::Result<_>`.
+2. ~~**`components/{UploadDropzone,ImageGrid,CopyLinkButton}.vue` inlined into
+   `ImagesView.vue`** (spec §5)~~ **RESOLVED 2026-07-25.** The three components
+   are now extracted into `desktop/src/components/`; `ImagesView.vue` is a thin
+   composition root (`<UploadDropzone @uploaded>` + `<ImageGrid>`).
 3. **`tauri-plugin-notification` not installed** (spec §2.1). Upload-complete
    feedback uses Naive UI `useMessage().success(...)` which renders in-app
    toast already; a native OS notification would duplicate that channel.
 4. **`ImageRepository::find_by_key` not added** (spec §4.2). The public route
    goes straight through `Storage::get` with no DB lookup (spec §3.3, §4.4
    "no per-object DB lookups"), so the method would be dead code.
+
+### Corrections (2026-07-25)
+
+- **`link`/`file` RBAC gate corrected to `Image/Read`** (spec §4.1). The handler
+  guard was `owner OR Image/Update`; it is now `owner OR Image/Read`, matching
+  the spec table. Consequence: a `viewer` (who holds `Image/Read`) can now
+  generate the public link for *any* image. The integration test
+  `image_link_forbids_viewer_accessing_others_image` now uses a token with an
+  empty scope (no `Image/Read`) to assert 403, and a new positive test
+  `image_link_allows_viewer_accessing_others_image` asserts 200 for a viewer.
+- **`auth.rs::login` profile name derived from server host** (multi-profile):
+  each server now gets an independent profile instead of the hardcoded
+  `"default"`, matching the multi-profile Settings UI.
 
 ## Verification Commands
 

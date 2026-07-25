@@ -5,11 +5,13 @@
 //!
 //! The client is a thin HTTP client over the Picroom REST API. JSON CRUD is
 //! issued from the frontend via `tauri-plugin-http` (native fetch, no CORS);
-//! large file upload/download streams through Rust commands (added in a later
-//! slice). See `docs/spec-admin-client.md`.
+//! large file upload/download streams through Rust commands
+//! (`commands/upload.rs`, `commands/download.rs`). See `docs/spec-admin-client.md`.
 
 mod commands;
-mod config;
+mod error;
+mod state;
+mod store;
 
 use commands::{auth, download, upload};
 

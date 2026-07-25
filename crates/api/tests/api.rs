@@ -776,7 +776,33 @@ async fn image_link_forbids_viewer_accessing_others_image() {
     let img = sample_image(img_id, UserId(uuid::Uuid::now_v7()), "img/other.bin");
     let app = link_app(vec![img], Some("https://cdn.example.com"));
 
-    // Viewer-scoped token (no Image/Update permission) → 403.
+    // Token with no roles (no Image/Read permission) → 403.
+    let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
+    let token = jwt
+        .issue_with_scopes(uuid::Uuid::now_v7(), &[])
+        .unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/images/{img_id}/link"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn image_link_allows_viewer_accessing_others_image() {
+    let img_id = uuid::Uuid::now_v7();
+    // Image owned by someone else.
+    let img = sample_image(img_id, UserId(uuid::Uuid::now_v7()), "img/viewer.bin");
+    let app = link_app(vec![img], Some("https://cdn.example.com"));
+
+    // Viewer-scoped token (has Image/Read permission) may read others' links.
     let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
     let token = jwt
         .issue_with_scopes(uuid::Uuid::now_v7(), &["viewer".to_string()])
@@ -792,7 +818,10 @@ async fn image_link_forbids_viewer_accessing_others_image() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["public_url"], "https://cdn.example.com/i/img/viewer.bin");
 }
 
 // ---------------------------------------------------------------------------
