@@ -158,17 +158,23 @@ testable in a single command. Strike-through = done.
 - **Unblocked**: no local Windows SDK — `windows-latest` provides VS Build Tools + Windows SDK + WiX/NSIS; `swatinem/rust-cache` + npm cache cut the ~10 min first build
 
 ### Task 3.5: End-to-end smoke (manual) ⏳
-Steps from `spec-admin-client.md` §6.3:
+Prereqs: a running **Docker daemon** + a **display** (for the Tauri GUI). Cannot
+run in CI/sandbox — this env has no Docker daemon and no `DISPLAY`. CLI surface
+verified 2026-07-25 against `target/release/picroom(.exe)`.
 - [ ] `docker compose -f docker/docker-compose.yml up -d`
-- [ ] `./target/release/picroom admin migrate && admin user create --email admin@example.com --role admin`
-- [ ] `cd desktop && npm run tauri dev`
-- [ ] Log in, upload, copy 公链, open in private window → image renders
+      (the `picroom-migrate` service auto-runs `admin migrate run`; wait for `picroom-api` healthy)
+- [ ] Create the admin user (the compose `api` container already has `PICROOM_DATABASE__URL`):
+      `docker compose exec api picroom admin user create --email admin@example.com --name Admin --password "smoke-pass-123" --role admin`
+      (requires `--name` + `--password`; `--role` defaults to `viewer`)
+- [ ] `cd desktop && npm run tauri dev`  (Windows binary is `picroom.exe`)
+- [ ] Log in at server URL `http://localhost:8080` (email/password above)
+- [ ] Upload, copy 公链, open in private window → image renders
 - [ ] Download to a chosen folder → bytes match
 - [ ] List users, change a role, disable + enable
 - [ ] List teams + members; list/create storage policies
 - [ ] Page through audit log
 - [ ] Force a 401 (expire token) → redirected to login, token cleared
-- **Blocked on**: running stack; human verification
+- **Blocked on**: Docker + GUI display on the local machine; human verification
 
 ## Out-of-scope (deliberately deferred)
 
