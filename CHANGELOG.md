@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-1.0.0 hardening and feature work. Will roll up into 1.1.0.
+
+### Added
+- OIDC / SSO end-to-end (`/api/v1/auth/oidc/:provider/{login,callback}`):
+  provider discovery, state/nonce CSRF binding, id_token verified against
+  the provider JWKS (RS256/ES256), accounts auto-provisioned as `viewer`
+  (or `admin` via `auth.oidc.admin_emails`). Closes the 1.0.0
+  "OIDC SSO not wired" gap. See `crates/auth/src/oidc.rs` and
+  `crates/api/src/handlers/auth.rs`.
+- `GET /i/:key` public image-byte route + dependency-free magic-byte
+  Content-Type sniffer; capability URLs (`img/{uuid_v7}.bin`) are the v1
+  public-link model (ADR-0008).
+- `GET /api/v1/images/:id/link` and `GET /api/v1/images/:id/file` for
+  authenticated public/signed-URL generation; honors
+  `server.public_url_base` when set, otherwise falls back to path-relative.
+- Admin endpoints: `GET /api/v1/admin/users` (paginated),
+  `POST /api/v1/admin/users/:id/{disable,enable}`,
+  `PATCH /api/v1/admin/users/:id/role`,
+  `GET /api/v1/teams` + `/teams/:id/members`,
+  `GET/POST /api/v1/admin/storage/policies`.
+- PostgreSQL implementations of the `admin user …` CLI (`user_create_pg`,
+  `user_list_pg`, `user_set_role_pg`, `user_disable_pg`); SQLite paths
+  coexist.
+- Hard quota enforcement for the PG path: `QuotaService` rejects uploads
+  once `quotas.max_bytes - SUM(bytes) < payload` (default 10 GiB per user).
+  Team-level quotas still unlimited.
+- Desktop admin client (`desktop/`): Tauri 2 + Vue 3 native GUI for
+  drag-drop upload, public-link copy, image/user/team/storage/audit admin
+  screens. Multi-profile support. `desktop/src-tauri` is a standalone
+  Cargo project (not a workspace member) — see ADR-0008 and
+  [`docs/spec-admin-client.md`](docs/spec-admin-client.md).
+
+### Fixed
+- S3 `ListObjectsV2` actually lists instead of always returning 400.
+- Storage-policy wiring in CI (root cause: missing migration row).
+- IDOR bypass in image handlers (`Option<AuthUser>` → required `AuthUser`)
+  and missing owner check on `GET/DELETE /images/:id`.
+- Unbounded request bodies in axum (`RequestBodyLimitLayer` defaults to
+  `max_body_mb = 100`).
+- Path-traversal protection hardened in `LocalDriver`.
+
 ## [1.0.0] - 2026-07-11
 
 First stable release. Single Rust binary self-hosted image hosting service
@@ -44,7 +85,8 @@ for teams.
 - Operational endpoints: `/healthz`, `/readyz` (pings DB), `/metrics`
   (Prometheus).
 - Design documentation: `docs/spec.md`, `docs/adr/` (7 ADRs), plus
-  deployment, operations, and security runbooks.
+  deployment, operations, and security runbooks. (8th ADR — the Tauri
+  admin client — was added in the post-1.0.0 cycle.)
 
 ### Security
 - All Rust dependencies pinned to minor versions and audited for MIT-only
@@ -57,7 +99,6 @@ for teams.
 - SPDX-`MIT` license headers on every source file.
 
 ### Known limitations
-- OIDC SSO is not wired (handlers return 501).
 - S3 multipart upload (`InitiateMultipartUpload`/`UploadPart`/`Complete`)
   returns an honest 501; single-shot PUT is supported.
 - Watermark and EXIF stripping return `Err` (not implemented).

@@ -1,8 +1,8 @@
 # Spec: Picroom Tauri Admin Client
 
-> **Status**: Draft · **Feature**: desktop management client + supporting backend API
+> **Status**: Accepted · **Feature**: desktop management client + supporting backend API
 > **Parent spec**: [`docs/spec.md`](spec.md) v1.0 · **OpenAPI**: [`docs/api/openapi.yaml`](api/openapi.yaml)
-> **Last updated**: 2026-07-12
+> **Last updated**: 2026-07-25
 
 ## 1. Objective
 

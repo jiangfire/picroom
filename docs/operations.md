@@ -31,9 +31,10 @@ picroom admin user set-role <uuid> --role manager
 picroom admin user disable <uuid>
 ```
 
-> Note: the `admin user …` CLI is currently implemented for the SQLite backend
-> only. Against PostgreSQL, manage users via SQL or build the equivalent PG
-> path.
+Both PostgreSQL (`user_create_pg`, `user_list_pg`, `user_set_role_pg`,
+`user_disable_pg`) and SQLite (`user_create_sqlite`, …) paths are wired in
+`crates/admin/src/user.rs`; the CLI auto-selects the implementation from the
+`Database` enum.
 
 ## 3. Storage health check
 

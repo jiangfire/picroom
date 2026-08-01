@@ -1,6 +1,6 @@
 # Picroom Admin Client
 
-A desktop administration client for [Picroom](https://github.com/your-org/picroom), built with
+A desktop administration client for [Picroom](https://github.com/picroom/picroom), built with
 [Tauri 2](https://v2.tauri.app/) and [Vue 3](https://vuejs.org/). It talks to the Picroom REST API
 to manage images, users, teams, storage policies, and audit logs from a native window.
 

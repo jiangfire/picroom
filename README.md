@@ -24,6 +24,9 @@ and an AWS S3-compatible endpoint in a single statically-linked binary.
 - **Multi-tenancy**: teams, per-team storage policies, per-team quotas.
 - **MIT licensed**: Use it commercially without disclosure.
 - **Easy deploy**: One `docker compose up` brings up the whole stack.
+- **Desktop admin client** (`desktop/`): a Tauri 2 + Vue 3 native GUI for
+  drag-drop uploads, public-link copy, and admin screens. See
+  [`docs/spec-admin-client.md`](docs/spec-admin-client.md).
 
 ## Quick start (Docker Compose)
 
@@ -98,7 +101,22 @@ abstractions are:
 - **`admin`**: CLI subcommands (migrate, user, team, audit).
 
 See [`docs/spec.md`](docs/spec.md) for the full design and [`docs/adr/`](docs/adr/)
-for architectural decision records.
+for architectural decision records. The desktop client has its own spec at
+[`docs/spec-admin-client.md`](docs/spec-admin-client.md).
+
+## Desktop admin client
+
+```bash
+cd desktop
+npm install
+npm run tauri dev      # full Tauri dev (Rust + webview)
+npm run tauri build    # produce Windows installer (MSI/NSIS) under desktop/src-tauri/target/release/bundle/
+```
+
+The client is a thin HTTP client over the `/api/v1/*` REST surface; it does
+not embed the server and does not talk to PostgreSQL directly. RBAC stays
+enforced server-side. See [`desktop/README.md`](desktop/README.md) and
+[`docs/spec-admin-client.md`](docs/spec-admin-client.md).
 
 ## Development
 

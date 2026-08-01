@@ -1,6 +1,6 @@
 # Picroom — Specification (v1.0)
 
-> **Status**: Draft for review · **Version**: 1.0.0 · **Last updated**: 2026-07-15
+> **Status**: Draft for review · **Version**: 1.0.0 · **Last updated**: 2026-07-25
 
 Picroom is a self-hosted image hosting service built for teams. It targets the gap
 between consumer-grade PHP scripts (Lsky Pro, EasyImage) and heavyweight photo
@@ -929,7 +929,7 @@ bind_addr = "0.0.0.0:8080"
 request_timeout_secs = 30
 graceful_shutdown_secs = 30
 max_body_mb = 100
-# public_url_base = "https://cdn.example.com"   # absolute base for /link & /file
+# public_url_base = "https://cdn.example.com"   # absolute base for /link & /file (ADR-0008)
 
 [database]
 url = "postgres://picroom:secret@localhost/picroom"
@@ -972,6 +972,7 @@ client_id = "${OIDC_GOOGLE_CLIENT_ID}"
 client_secret = "${OIDC_GOOGLE_CLIENT_SECRET}"
 redirect_uri = "https://picroom.example.com/api/v1/auth/oidc/google/callback"
 scopes = ["openid", "email", "profile"]
+# admin_emails = ["admin@example.com"]   # emails promoted to `admin` on first OIDC login
 
 [quota]
 default_user_bytes = 10737418240                # 10 GiB
@@ -1011,20 +1012,34 @@ Items that remain unresolved and require decision before implementation:
 
 1. **Frontend deployment**: bundle into binary via `include_str!` + axum
    static handler, or separate SPA served by nginx? **Recommended**: include
-   in binary for single-binary deployment.
+   in binary for single-binary deployment. **Resolved (post-MVP, 2026-07-12)**:
+   the public-link surface (`GET /i/:key`, `GET /api/v1/images/:id/link`,
+   `GET /api/v1/images/:id/file`) replaces any bundled SPA; the admin GUI
+   lives in the standalone Tauri 2 client under `desktop/` (see §17 and
+   [`docs/spec-admin-client.md`](spec-admin-client.md)).
 2. **Image variant storage path layout**: by-image-id (`/img/<id>/avif`) or by
    hash (`/img/<sha256[:2]>/<sha256>.avif`)? **Recommended**: by ID for human
    debugging, hash for deduplication (post-MVP).
 3. **Default DB**: ship `sqlite` mode by default, or always require PostgreSQL?
-   **Recommended**: dual-mode with env switch.
+   **Recommended**: dual-mode with env switch. **Resolved (2026-07-11)**:
+   `Database` enum (`crates/infra/src/db.rs`) selects Postgres or SQLite
+   from `database.url`; both backends are wired through `admin migrate run`
+   and `admin user …`.
 4. **Quota enforcement**: hard cap (reject) vs. soft cap (allow + warn)?
    **Recommended**: hard cap by default, soft cap configurable.
+   **Resolved (2026-07-25)**: `QuotaService` rejects uploads when
+   `quotas.max_bytes - SUM(bytes) < payload` (PG path); `soft_limit_warning`
+   and `hard_limit_enforce` are config knobs (see `docs/security.md` §6).
 5. **Audit retention**: 30 / 90 / 365 days? **Recommended**: configurable,
-   default 365 days.
+   default 365 days. **Resolved (2026-07-11)**: `audit.retention_days`
+   defaults to 365; no automated sweep ships in v1 (manual pruning only).
 6. **Rate limiting**: per-IP, per-user, or both? **Recommended**: per-user
-   primary, per-IP secondary.
+   primary, per-IP secondary. **Resolved (2026-07-11)**: not implemented at
+   the application layer; rely on the reverse proxy (see `docs/security.md`
+   §6).
 7. **Branding**: project name confirmed as `Picroom`? Logo? **Recommended**:
-   ship without logo in v1.
+   ship without logo in v1. **Resolved**: shipped without logo; client
+   window title is "Picroom Admin".
 
 ---
 
@@ -1051,6 +1066,35 @@ Items that remain unresolved and require decision before implementation:
 - Lsky Pro (for reference): https://github.com/lsky-org/lsky-pro
 - AWS SigV4 reference: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
 - 12-Factor App: https://12factor.net/
+
+## 17. Desktop admin client
+
+A standalone **Tauri 2 + Vue 3** desktop application (`desktop/`) ships
+alongside the server to give administrators a GUI for day-to-day operations
+(image upload/manage, public-link generation, user/team/storage admin, audit
+review). It is a **thin HTTP client** over the `/api/v1/*` REST surface; it
+does **not** embed the server and does not talk to PostgreSQL directly. RBAC
+stays enforced server-side.
+
+The full design, command-layer Rust crate shape, and Phase 1/2/3 progress
+live in [`docs/spec-admin-client.md`](spec-admin-client.md),
+[`docs/plan-admin-client.md`](plan-admin-client.md),
+[`docs/tasks-admin-client.md`](tasks-admin-client.md), and
+[`docs/test-plan-admin-client.md`](test-plan-admin-client.md). The
+architectural decision is recorded in [ADR-0008](adr/0008-tauri-admin-client.md).
+
+Key facts:
+
+- `desktop/src-tauri/` is a **standalone Cargo project**, NOT a member of the
+  picroom workspace (see §4.1 and ADR-0008). CI builds it with its own
+  `cargo` invocation.
+- Public-link capability ("公链") is exposed by the server at
+  `GET /i/{key}` (no auth) plus the authenticated
+  `GET /api/v1/images/:id/link` / `GET /api/v1/images/:id/file` endpoints.
+  Content-Type is detected by a dependency-free magic-byte sniffer so the
+  `image` crate does not have to enter the API production deps (ADR-0008).
+- Build target priority is **Windows first** (NSIS + MSI installers). Linux
+  and macOS bundles are not on the v1 path.
 
 ---
 
