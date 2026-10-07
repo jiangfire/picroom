@@ -5,7 +5,7 @@
 
 use crate::state::AppState;
 use axum::middleware;
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use std::sync::Arc;
 
@@ -43,6 +43,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/images/:id/link",
             get(super::handlers::images::link),
+        )
+        // Per-resource ACL management (D-10)
+        .route(
+            "/api/v1/images/:id/acl",
+            get(super::handlers::acl::list_acl).put(super::handlers::acl::replace_acl),
+        )
+        .route(
+            "/api/v1/images/:id/acl/:subject_type/:subject_id",
+            delete(super::handlers::acl::revoke_acl),
         )
         .route(
             "/api/v1/images/:id/file",

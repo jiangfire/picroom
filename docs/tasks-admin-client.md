@@ -42,9 +42,15 @@ testable in a single command. Strike-through = done.
 - **Verify**: `cargo test -p picroom-api`; OpenAPI §`/admin/users/*`
 
 ### ~~Task 1.6: Team listing + members~~ ✅
-- ~~`GET /api/v1/teams` (`Team/Read`)~~
+- ~~`GET /api/v1/teams`~~
 - ~~`GET /api/v1/teams/:id/members`~~
 - **Verify**: `cargo test -p picroom-api`
+- **Correction (2026-10-07, review-v1.0 R-13)**: this task originally claimed
+  team listing shipped with `Team/Read` RBAC. It did not — both endpoints
+  discarded the caller identity. As of the v1.0 remediation, `GET /teams`
+  returns the caller's teams (managers/admins see all), and `GET
+  /teams/:id[/members]` requires membership or `Team/Read`; non-members get
+  404.
 
 ### ~~Task 1.7: Storage-policy management~~ ✅
 - ~~`GET /api/v1/admin/storage/policies`~~

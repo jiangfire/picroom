@@ -22,7 +22,6 @@ pub mod any;
 pub mod contract_test;
 pub mod driver;
 pub mod error;
-pub mod signing;
 
 pub use any::AnyStorage;
 pub use driver::{ObjectMeta, Storage, StorageLister, StorageReader, StorageSigner, StorageWriter};

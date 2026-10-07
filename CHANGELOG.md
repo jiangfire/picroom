@@ -64,8 +64,10 @@ for teams.
   HEAD/DELETE and `ListObjectsV2`.
 - Image pipeline: background worker producing AVIF + WebP variants and
   thumbnails, with retry/backoff and a dead-letter queue.
-- Multi-backend storage: Local, S3, MinIO, OSS, COS, Qiniu drivers behind a
-  capability-split `Storage` trait.
+- Multi-backend storage: `LocalDriver` + `S3Driver` (with a `MinioDriver`
+  type alias + `minio()` constructor convenience for MinIO endpoints)
+  behind a capability-split `Storage` trait. OSS / COS / Qiniu drivers are
+  planned (ADR-0003) but not implemented in v1.
 - Authentication: JWT (strong-secret enforced in release builds) + API tokens
   + Argon2id password hashing + RBAC engine (`PermissionService`) wired into
   handlers.

@@ -26,4 +26,7 @@ pub use oidc::{
     OidcUserInfo,
 };
 pub use password::{PasswordError, PasswordHasher};
-pub use rbac::{Decision, Permission, PermissionAction, RbacEngine, Resource, ResourceType, Role};
+pub use rbac::{
+    AclEffect, AclRule, AclSubject, Actor, Decision, Permission, PermissionAction, RbacEngine,
+    Resource, ResourceType, Role,
+};

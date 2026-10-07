@@ -130,9 +130,14 @@ abstraction, or a non-obvious design choice, add or update an ADR in
 ## Testing policy
 
 - Unit tests in `#[cfg(test)] mod tests` per file.
-- Integration tests in `<crate>/tests/`.
-- E2E tests in top-level `tests/`, gated by `--features e2e`.
-- Coverage ≥ 80 % per crate; 100 % for `domain`.
+- Integration tests in `<crate>/tests/` (e.g. `crates/api/tests/api.rs`,
+  `crates/worker/tests/db_queue.rs`, `crates/auth/tests/oidc.rs`).
+- E2E tests: a top-level `tests/` tree is reserved (currently holds only
+  `tests/fixtures/`); the testcontainers-driven suite is a tracked
+  follow-up, **not yet wired** — do not gate on `--features e2e`.
+  See `docs/spec.md` §6.3.
+- Coverage ≥ 80 % per crate; 100 % for `domain`. Current numbers are
+  tracked in `docs/coverage-plan.md`.
 - Property-based tests with `proptest` for parsers and serializers.
 - Golden / snapshot tests for OpenAPI + config.
 

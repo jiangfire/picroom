@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use picroom_domain::{
     Image, ImageId, NewOidcUser, NewUser, Page, PageReq, Team, TeamId, TeamMember, User, UserId,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, SqlitePool};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -594,6 +594,8 @@ pub trait TeamRepository: Send + Sync {
     async fn get(&self, id: TeamId) -> Result<Team, ServiceError>;
     /// Lists all teams (newest first).
     async fn list(&self) -> Result<Vec<Team>, ServiceError>;
+    /// Lists the teams the user is a member of (newest first).
+    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError>;
     /// Adds or updates a team membership.
     async fn add_member(
         &self,
@@ -603,6 +605,12 @@ pub trait TeamRepository: Send + Sync {
     ) -> Result<(), ServiceError>;
     /// Lists the members of a team (oldest join first).
     async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError>;
+    /// Returns the actor's role within a team, or `None` when not a member.
+    async fn member_role(
+        &self,
+        team_id: TeamId,
+        user_id: UserId,
+    ) -> Result<Option<String>, ServiceError>;
 }
 
 /// PostgreSQL-backed team repository.
@@ -689,6 +697,33 @@ impl TeamRepository for PgTeamRepository {
             .collect())
     }
 
+    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError> {
+        let rows: Vec<TeamRow> = sqlx::query_as::<_, TeamRow>(
+            r"SELECT t.id, t.name, t.slug, t.description, t.storage_policy, t.created_at
+              FROM teams t
+              JOIN team_members m ON m.team_id = t.id
+              WHERE m.user_id = $1
+              ORDER BY t.created_at DESC",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list teams for user: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, name, slug, description, storage_policy, created_at)| Team {
+                    id: TeamId(id),
+                    name,
+                    slug,
+                    description,
+                    storage_policy,
+                    created_at,
+                },
+            )
+            .collect())
+    }
+
     async fn add_member(
         &self,
         team_id: TeamId,
@@ -727,6 +762,21 @@ impl TeamRepository for PgTeamRepository {
                 joined_at,
             })
             .collect())
+    }
+
+    async fn member_role(
+        &self,
+        team_id: TeamId,
+        user_id: UserId,
+    ) -> Result<Option<String>, ServiceError> {
+        let row: Option<(String,)> =
+            sqlx::query_as(r"SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
+                .bind(team_id.as_uuid())
+                .bind(user_id.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| ServiceError::Internal(format!("member role: {e}")))?;
+        Ok(row.map(|(r,)| r))
     }
 }
 
@@ -809,6 +859,440 @@ impl StoragePolicyRepository for PgStoragePolicyRepository {
         .await
         .map_err(|e| ServiceError::Internal(format!("create storage policy: {e}")))?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resource ACL repository (PG + SQLite)
+// ---------------------------------------------------------------------------
+
+/// One grant on a resource — a `resource_acls` row reduced to its semantics.
+///
+/// `resource_type`/`resource_id` are query parameters (they identify the
+/// resource the grant is attached to), so a grant carries only the subject,
+/// the action, and the effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AclGrant {
+    /// Who the grant applies to.
+    pub subject: picroom_auth::AclSubject,
+    /// Granted action (`admin` acts as a wildcard).
+    pub action: picroom_auth::PermissionAction,
+    /// `allow` or `deny` (deny is the highest-priority rule).
+    pub effect: picroom_auth::AclEffect,
+}
+
+impl AclGrant {
+    /// Builds an allow grant.
+    pub fn allow(
+        subject: picroom_auth::AclSubject,
+        action: picroom_auth::PermissionAction,
+    ) -> Self {
+        Self {
+            subject,
+            action,
+            effect: picroom_auth::AclEffect::Allow,
+        }
+    }
+
+    /// Builds a deny grant.
+    pub fn deny(subject: picroom_auth::AclSubject, action: picroom_auth::PermissionAction) -> Self {
+        Self {
+            subject,
+            action,
+            effect: picroom_auth::AclEffect::Deny,
+        }
+    }
+}
+
+/// Repository for `resource_acls`.
+#[async_trait]
+pub trait ResourceAclRepository: Send + Sync {
+    /// Lists every grant attached to a resource.
+    async fn list_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Result<Vec<AclGrant>, ServiceError>;
+    /// Replaces the full grant set of a resource (idempotent).
+    async fn replace_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        grants: &[AclGrant],
+    ) -> Result<(), ServiceError>;
+    /// Removes every grant for one subject on one resource. Returns the number
+    /// of removed rows.
+    async fn revoke(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        subject: picroom_auth::AclSubject,
+    ) -> Result<u64, ServiceError>;
+}
+
+/// Parses a DB CHECK value back to a [`picroom_auth::PermissionAction`].
+fn action_from_str(s: &str) -> Option<picroom_auth::PermissionAction> {
+    match s {
+        "read" => Some(picroom_auth::PermissionAction::Read),
+        "create" => Some(picroom_auth::PermissionAction::Create),
+        "update" => Some(picroom_auth::PermissionAction::Update),
+        "delete" => Some(picroom_auth::PermissionAction::Delete),
+        "admin" => Some(picroom_auth::PermissionAction::Admin),
+        _ => None,
+    }
+}
+
+/// Splits a subject into its `(subject_type, subject_id)` columns.
+fn subject_to_cols(s: picroom_auth::AclSubject) -> (&'static str, Uuid) {
+    match s {
+        picroom_auth::AclSubject::User(id) => ("user", id),
+        picroom_auth::AclSubject::Team(id) => ("team", id),
+    }
+}
+
+/// Rebuilds a subject from its `(subject_type, subject_id)` columns.
+fn subject_from_cols(t: &str, id: Uuid) -> Option<picroom_auth::AclSubject> {
+    match t {
+        "user" => Some(picroom_auth::AclSubject::User(id)),
+        "team" => Some(picroom_auth::AclSubject::Team(id)),
+        _ => None,
+    }
+}
+
+/// Splits a grant into bindable columns (shared by both backends).
+type GrantCols = (String, Uuid, String, Uuid, String, String);
+
+fn grant_to_cols(resource_type: &str, resource_id: Uuid, g: &AclGrant) -> GrantCols {
+    let (st, sid) = subject_to_cols(g.subject);
+    (
+        resource_type.to_string(),
+        resource_id,
+        st.to_string(),
+        sid,
+        g.action.as_str().to_string(),
+        match g.effect {
+            picroom_auth::AclEffect::Allow => "allow".to_string(),
+            picroom_auth::AclEffect::Deny => "deny".to_string(),
+        },
+    )
+}
+
+fn grant_from_cols(st: String, sid: Uuid, permission: String, effect: String) -> Option<AclGrant> {
+    Some(AclGrant {
+        subject: subject_from_cols(&st, sid)?,
+        action: action_from_str(&permission)?,
+        effect: match effect.as_str() {
+            "allow" => picroom_auth::AclEffect::Allow,
+            "deny" => picroom_auth::AclEffect::Deny,
+            _ => return None,
+        },
+    })
+}
+
+/// PostgreSQL-backed ACL repository.
+#[derive(Debug, Clone)]
+pub struct PgResourceAclRepository {
+    pool: PgPool,
+}
+
+impl PgResourceAclRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ResourceAclRepository for PgResourceAclRepository {
+    async fn list_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Result<Vec<AclGrant>, ServiceError> {
+        let rows: Vec<(String, Uuid, String, String)> = sqlx::query_as(
+            r"SELECT subject_type, subject_id, permission, effect
+              FROM resource_acls WHERE resource_type = $1 AND resource_id = $2",
+        )
+        .bind(resource_type)
+        .bind(resource_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list grants: {e}")))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (st, sid, permission, effect) in rows {
+            out.push(
+                grant_from_cols(st, sid, permission, effect)
+                    .ok_or_else(|| ServiceError::Internal("unknown acl row value".into()))?,
+            );
+        }
+        Ok(out)
+    }
+
+    async fn replace_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        grants: &[AclGrant],
+    ) -> Result<(), ServiceError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl tx: {e}")))?;
+        sqlx::query("DELETE FROM resource_acls WHERE resource_type = $1 AND resource_id = $2")
+            .bind(resource_type)
+            .bind(resource_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl clear: {e}")))?;
+        for g in grants {
+            let (rt, rid, st, sid, permission, effect) =
+                grant_to_cols(resource_type, resource_id, g);
+            sqlx::query(
+                r"INSERT INTO resource_acls
+                    (id, resource_type, resource_id, subject_type, subject_id, permission, effect)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            )
+            .bind(Uuid::now_v7())
+            .bind(rt)
+            .bind(rid)
+            .bind(st)
+            .bind(sid)
+            .bind(permission)
+            .bind(effect)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl insert: {e}")))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl commit: {e}")))?;
+        Ok(())
+    }
+
+    async fn revoke(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        subject: picroom_auth::AclSubject,
+    ) -> Result<u64, ServiceError> {
+        let (st, sid) = subject_to_cols(subject);
+        let res = sqlx::query(
+            r"DELETE FROM resource_acls
+              WHERE resource_type = $1 AND resource_id = $2 AND subject_type = $3 AND subject_id = $4",
+        )
+        .bind(resource_type)
+        .bind(resource_id)
+        .bind(st)
+        .bind(sid)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("acl revoke: {e}")))?;
+        Ok(res.rows_affected())
+    }
+}
+
+/// SQLite-backed ACL repository (dev path — mirrors the PostgreSQL semantics).
+#[derive(Debug, Clone)]
+pub struct SqliteResourceAclRepository {
+    pool: SqlitePool,
+}
+
+impl SqliteResourceAclRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ResourceAclRepository for SqliteResourceAclRepository {
+    async fn list_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> Result<Vec<AclGrant>, ServiceError> {
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            r"SELECT subject_type, subject_id, permission, effect
+              FROM resource_acls WHERE resource_type = ?1 AND resource_id = ?2",
+        )
+        .bind(resource_type)
+        .bind(resource_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("list grants: {e}")))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (st, sid_text, permission, effect) in rows {
+            let sid = Uuid::parse_str(&sid_text)
+                .map_err(|e| ServiceError::Internal(format!("acl subject id: {e}")))?;
+            out.push(
+                grant_from_cols(st, sid, permission, effect)
+                    .ok_or_else(|| ServiceError::Internal("unknown acl row value".into()))?,
+            );
+        }
+        Ok(out)
+    }
+
+    async fn replace_grants(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        grants: &[AclGrant],
+    ) -> Result<(), ServiceError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl tx: {e}")))?;
+        sqlx::query("DELETE FROM resource_acls WHERE resource_type = ?1 AND resource_id = ?2")
+            .bind(resource_type)
+            .bind(resource_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl clear: {e}")))?;
+        for g in grants {
+            let (rt, rid, st, sid, permission, effect) =
+                grant_to_cols(resource_type, resource_id, g);
+            sqlx::query(
+                r"INSERT INTO resource_acls
+                    (id, resource_type, resource_id, subject_type, subject_id, permission, effect, granted_at)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )
+            .bind(Uuid::now_v7().to_string())
+            .bind(rt)
+            .bind(rid.to_string())
+            .bind(st)
+            .bind(sid.to_string())
+            .bind(permission)
+            .bind(effect)
+            .bind(OffsetDateTime::now_utc().to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl insert: {e}")))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| ServiceError::Internal(format!("acl commit: {e}")))?;
+        Ok(())
+    }
+
+    async fn revoke(
+        &self,
+        resource_type: &str,
+        resource_id: Uuid,
+        subject: picroom_auth::AclSubject,
+    ) -> Result<u64, ServiceError> {
+        let (st, sid) = subject_to_cols(subject);
+        let res = sqlx::query(
+            r"DELETE FROM resource_acls
+              WHERE resource_type = ?1 AND resource_id = ?2 AND subject_type = ?3 AND subject_id = ?4",
+        )
+        .bind(resource_type)
+        .bind(resource_id.to_string())
+        .bind(st)
+        .bind(sid.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("acl revoke: {e}")))?;
+        Ok(res.rows_affected())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session repository (PG)
+// ---------------------------------------------------------------------------
+
+/// A live login session — a `sessions` row the JWT's `sid` claim points at.
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    /// Session id (the JWT `sid`).
+    pub id: Uuid,
+    /// Owning user.
+    pub user_id: Uuid,
+    /// Expiry (server-side; the JWT has its own shorter `exp`).
+    pub expires_at: OffsetDateTime,
+}
+
+/// Repository for login sessions. Revocation is the point: a logout or a
+/// disabled user must invalidate outstanding tokens before they expire (D-6).
+#[async_trait]
+pub trait SessionRepository: Send + Sync {
+    /// Inserts a new session.
+    async fn create(&self, session: &SessionRow) -> Result<(), ServiceError>;
+    /// Returns the session when it exists and is neither revoked nor expired.
+    async fn get_active(&self, id: Uuid) -> Result<Option<SessionRow>, ServiceError>;
+    /// Revokes one session (logout). Returns the number of affected rows.
+    async fn revoke(&self, id: Uuid) -> Result<u64, ServiceError>;
+    /// Revokes every live session of a user (disable-user cascade).
+    async fn revoke_all_for_user(&self, user_id: Uuid) -> Result<u64, ServiceError>;
+}
+
+/// PostgreSQL-backed session repository.
+#[derive(Debug, Clone)]
+pub struct PgSessionRepository {
+    pool: PgPool,
+}
+
+impl PgSessionRepository {
+    /// Creates a new repository bound to the given pool.
+    pub const fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl SessionRepository for PgSessionRepository {
+    async fn create(&self, session: &SessionRow) -> Result<(), ServiceError> {
+        sqlx::query(
+            r"INSERT INTO sessions (id, user_id, csrf_token, expires_at)
+              VALUES ($1, $2, $3, $4)",
+        )
+        .bind(session.id)
+        .bind(session.user_id)
+        .bind(Uuid::now_v7().simple().to_string()) // csrf placeholder; cookie flows unused today
+        .bind(session.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("session create: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_active(&self, id: Uuid) -> Result<Option<SessionRow>, ServiceError> {
+        let row: Option<(Uuid, Uuid, OffsetDateTime)> = sqlx::query_as(
+            r"SELECT id, user_id, expires_at FROM sessions
+              WHERE id = $1 AND revoked_at IS NULL AND expires_at > NOW()",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("session get: {e}")))?;
+        Ok(row.map(|(id, user_id, expires_at)| SessionRow {
+            id,
+            user_id,
+            expires_at,
+        }))
+    }
+
+    async fn revoke(&self, id: Uuid) -> Result<u64, ServiceError> {
+        let res = sqlx::query(
+            "UPDATE sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("session revoke: {e}")))?;
+        Ok(res.rows_affected())
+    }
+
+    async fn revoke_all_for_user(&self, user_id: Uuid) -> Result<u64, ServiceError> {
+        let res = sqlx::query(
+            "UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ServiceError::Internal(format!("session revoke all: {e}")))?;
+        Ok(res.rows_affected())
     }
 }
 

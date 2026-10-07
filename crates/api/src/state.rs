@@ -10,8 +10,10 @@ use picroom_auth::JwtService;
 use picroom_domain::Page as _Page;
 use picroom_infra::config::OidcProviderConfig;
 use picroom_service::repo::{
-    ImageRepository, StoragePolicyRepository, TeamRepository, UserRepository,
+    ImageRepository, ResourceAclRepository, SessionRepository, StoragePolicyRepository,
+    TeamRepository, UserRepository,
 };
+use picroom_service::AuthzService;
 use picroom_service::DeleteService;
 use picroom_service::PermissionService;
 use picroom_service::QuotaService;
@@ -64,17 +66,33 @@ pub struct AppState {
     pub oidc_admin_emails: Arc<HashSet<String>>,
     /// Whether OIDC state cookies are marked `Secure` (false for local HTTP dev).
     pub cookie_secure: bool,
+    /// Login-session repository (None without a DB). Makes `logout` and the
+    /// disable-user cascade revoke outstanding tokens (D-6).
+    pub session_repo: Option<Arc<dyn SessionRepository>>,
+    /// ACL grant repository backing the `/acl` endpoints (None without a DB).
+    pub acl_repo: Option<Arc<dyn ResourceAclRepository>>,
+    /// Authorization coordinator shared by the service layer and the ACL
+    /// endpoints.
+    pub authz: Arc<AuthzService>,
 }
 
 impl JwtProvider for AppState {
     fn jwt_service(&self) -> &JwtService {
         &self.jwt
     }
+
+    fn session_repo(&self) -> Option<&Arc<dyn SessionRepository>> {
+        self.session_repo.as_ref()
+    }
 }
 
 impl JwtProvider for Arc<AppState> {
     fn jwt_service(&self) -> &JwtService {
         &self.jwt
+    }
+
+    fn session_repo(&self) -> Option<&Arc<dyn SessionRepository>> {
+        self.session_repo.as_ref()
     }
 }
 
@@ -112,7 +130,51 @@ impl AppState {
             oidc_providers: Arc::new(HashMap::new()),
             oidc_admin_emails: Arc::new(HashSet::new()),
             cookie_secure: false,
+            session_repo: None,
+            acl_repo: None,
+            authz: Arc::new(AuthzService::without_backends()),
         }
+    }
+
+    /// Attaches the session repository (PostgreSQL-backed).
+    #[must_use]
+    pub fn with_session_repo(mut self, repo: Arc<dyn SessionRepository>) -> Self {
+        self.session_repo = Some(repo);
+        self
+    }
+
+    /// Sets the authorization coordinator.
+    #[must_use]
+    pub fn with_authz(mut self, authz: Arc<AuthzService>) -> Self {
+        self.authz = authz;
+        self
+    }
+
+    /// Sets the authorization coordinator used by the upload service (the
+    /// service-layer `Image/Create` / `Image/Delete` checks). Test and
+    /// wiring convenience over rebuilding `upload` by hand.
+    #[must_use]
+    pub fn with_upload_authz(mut self, authz: Arc<AuthzService>) -> Self {
+        self.upload = Arc::new(UploadService {
+            storage: self.upload.storage.clone(),
+            audit: self.upload.audit.clone(),
+            job_queue: self.upload.job_queue.clone(),
+            default_storage_policy: self.upload.default_storage_policy.clone(),
+            max_bytes: self.upload.max_bytes,
+            thumbnail_sizes: self.upload.thumbnail_sizes.clone(),
+            enable_avif: self.upload.enable_avif,
+            enable_webp: self.upload.enable_webp,
+            quota: self.upload.quota.clone(),
+            authz: (*authz).clone(),
+        });
+        self
+    }
+
+    /// Attaches the ACL grant repository backing the `/acl` endpoints.
+    #[must_use]
+    pub fn with_acl_repo(mut self, repo: Arc<dyn ResourceAclRepository>) -> Self {
+        self.acl_repo = Some(repo);
+        self
     }
 
     /// Attaches a user repository so the login handler can verify credentials.
@@ -126,6 +188,13 @@ impl AppState {
     #[must_use]
     pub fn with_image_repo(mut self, repo: Arc<dyn ImageRepository>) -> Self {
         self.image_repo = Some(repo);
+        self
+    }
+
+    /// Attaches a team repository so team handlers can read metadata.
+    #[must_use]
+    pub fn with_team_repo(mut self, repo: Arc<dyn TeamRepository>) -> Self {
+        self.team_repo = Some(repo);
         self
     }
 
@@ -153,6 +222,7 @@ impl AppState {
                 enable_avif: self.upload.enable_avif,
                 enable_webp: self.upload.enable_webp,
                 quota: self.upload.quota.clone(),
+                authz: self.upload.authz.clone(),
             });
         }
         self

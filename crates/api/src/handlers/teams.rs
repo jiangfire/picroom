@@ -77,15 +77,31 @@ pub async fn create(
 }
 
 /// `GET /api/v1/teams/:id` — fetch a team.
+///
+/// Visible to the caller's members and to principals holding `Team/Read`
+/// (manager/admin); anyone else gets 404 — an unscoped read would let any
+/// authenticated user enumerate every team (R-13).
 pub async fn get(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = state
         .team_repo
         .as_ref()
         .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
+    let is_member = matches!(
+        repo.member_role(TeamId(id), auth.user_id).await,
+        Ok(Some(_))
+    );
+    let can_read_all = state
+        .permissions
+        .check(&auth.roles, ResourceType::Team, PermissionAction::Read)
+        .is_ok();
+    if !is_member && !can_read_all {
+        // 404, not 403 — do not reveal other teams' existence.
+        return Err(ApiError::not_found("team not found"));
+    }
     let team = repo.get(TeamId(id)).await.map_err(ApiError::from)?;
     Ok(Json(json!({
         "id": team.id.to_string(),
@@ -97,16 +113,29 @@ pub async fn get(
     })))
 }
 
-/// `GET /api/v1/teams` — list all teams.
+/// `GET /api/v1/teams` — list teams.
+///
+/// Returns the caller's teams; principals holding `Team/Read`
+/// (manager/admin) may see the full roster of teams (R-13).
 pub async fn list(
     State(state): State<Arc<AppState>>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = state
         .team_repo
         .as_ref()
         .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
-    let teams = repo.list().await.map_err(ApiError::from)?;
+    let can_read_all = state
+        .permissions
+        .check(&auth.roles, ResourceType::Team, PermissionAction::Read)
+        .is_ok();
+    let teams = if can_read_all {
+        repo.list().await.map_err(ApiError::from)?
+    } else {
+        repo.list_for_user(auth.user_id)
+            .await
+            .map_err(ApiError::from)?
+    };
     let items: Vec<serde_json::Value> = teams
         .iter()
         .map(|t| {
@@ -132,15 +161,24 @@ pub async fn add_member(
     auth: AuthUser,
     Json(body): Json<AddMemberBody>,
 ) -> Result<StatusCode, ApiError> {
-    state
-        .permissions
-        .check(&auth.roles, ResourceType::Team, PermissionAction::Update)
-        .map_err(ApiError::from)?;
-
     let repo = state
         .team_repo
         .as_ref()
         .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
+    // Allowed: global `Team/Update` (manager/admin) or a team-level
+    // `manager`/`admin` member. Everyone else is an IDOR risk (R-13).
+    let global_allowed = state
+        .permissions
+        .check(&auth.roles, ResourceType::Team, PermissionAction::Update)
+        .is_ok();
+    let team_role = repo
+        .member_role(TeamId(id), auth.user_id)
+        .await
+        .unwrap_or(None);
+    let team_allowed = matches!(team_role.as_deref(), Some("manager") | Some("admin"));
+    if !global_allowed && !team_allowed {
+        return Err(ApiError::forbidden("not allowed"));
+    }
     repo.add_member(TeamId(id), body.user_id, &body.role)
         .await
         .map_err(ApiError::from)?;
@@ -150,15 +188,29 @@ pub async fn add_member(
 }
 
 /// `GET /api/v1/teams/:id/members` — list the members of a team.
+///
+/// Same visibility rule as `GET /teams/:id`: members and `Team/Read`
+/// holders only (R-13).
 pub async fn list_members(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = state
         .team_repo
         .as_ref()
         .ok_or_else(|| ApiError::not_implemented("teams storage not configured"))?;
+    let is_member = matches!(
+        repo.member_role(TeamId(id), auth.user_id).await,
+        Ok(Some(_))
+    );
+    let can_read_all = state
+        .permissions
+        .check(&auth.roles, ResourceType::Team, PermissionAction::Read)
+        .is_ok();
+    if !is_member && !can_read_all {
+        return Err(ApiError::not_found("team not found"));
+    }
     let members = repo
         .list_members(TeamId(id))
         .await

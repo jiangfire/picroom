@@ -21,7 +21,7 @@ async fn driver(server: &MockServer) -> S3Driver {
     )
     .with_endpoint(server.uri())
     .with_path_style(true);
-    S3Driver::new(cfg).await.unwrap()
+    S3Driver::new(cfg).unwrap()
 }
 
 #[tokio::test]

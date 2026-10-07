@@ -15,12 +15,38 @@ use uuid::Uuid;
 pub struct AuthUser {
     pub user_id: UserId,
     pub roles: Vec<Role>,
+    /// Session the token is bound to (`sid` claim), when the token carries
+    /// one. `logout` and the disable-user cascade revoke these.
+    pub session_id: Option<Uuid>,
+}
+
+impl AuthUser {
+    /// Projects the authenticated principal onto the RBAC [`Actor`].
+    pub fn actor(&self) -> picroom_auth::Actor {
+        picroom_auth::Actor::with_roles(self.user_id.as_uuid(), self.roles.clone())
+    }
+}
+
+/// Trait for providing JWT service from `AppState`.
+pub trait JwtProvider {
+    fn jwt_service(&self) -> &picroom_auth::JwtService;
+
+    /// The session repository, when one is configured. Tokens carrying a
+    /// `sid` are only accepted while their session row is live; `None`
+    /// (dev mode, no DB) skips that check.
+    fn session_repo(&self) -> Option<&std::sync::Arc<dyn picroom_service::SessionRepository>> {
+        None
+    }
 }
 
 /// Extractor: reads `Authorization: Bearer <jwt>` and validates it.
 ///
 /// Requires `S: JwtProvider`. Handlers that use this as a parameter will
 /// automatically reject unauthenticated requests with 401.
+///
+/// When the token carries a `sid` and a session repository is configured, the
+/// session must still exist and be unrevoked — that is what makes `logout`
+/// and disabling a user effective before the JWT expires (R-08, R-20, D-6).
 #[axum::async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
@@ -58,13 +84,31 @@ where
             Uuid::parse_str(&claims.sub).map_err(|_| (StatusCode::UNAUTHORIZED, "invalid sub"))?,
         );
 
-        Ok(Self { user_id, roles })
-    }
-}
+        // Session binding: a sid-bearing token must resolve to a live session.
+        if let Some(sid_text) = &claims.sid {
+            if let Some(sessions) = state.session_repo() {
+                let sid = Uuid::parse_str(sid_text)
+                    .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid session"))?;
+                match sessions.get_active(sid).await {
+                    Ok(Some(session)) => {
+                        if session.user_id != user_id.0 {
+                            return Err((StatusCode::UNAUTHORIZED, "invalid session"));
+                        }
+                    }
+                    Ok(None) => return Err((StatusCode::UNAUTHORIZED, "session revoked")),
+                    Err(_) => return Err((StatusCode::UNAUTHORIZED, "session check failed")),
+                }
+            }
+        }
 
-/// Trait for providing JWT service from `AppState`.
-pub trait JwtProvider {
-    fn jwt_service(&self) -> &picroom_auth::JwtService;
+        let session_id = claims.sid.and_then(|s| Uuid::parse_str(&s).ok());
+
+        Ok(Self {
+            user_id,
+            roles,
+            session_id,
+        })
+    }
 }
 
 /// Auth middleware: requires a **valid** `Authorization: Bearer <jwt>` on
@@ -73,7 +117,7 @@ pub trait JwtProvider {
 /// Unlike a presence-only check, this verifies the token signature and expiry
 /// against the configured [`JwtService`], so `Bearer garbage` is rejected with
 /// `401`. Handlers may additionally use the [`AuthUser`] extractor to obtain
-/// the authenticated principal.
+/// the authenticated principal (which also re-checks session revocation).
 pub async fn require_auth<S>(
     axum::extract::State(state): axum::extract::State<S>,
     req: axum::http::Request<axum::body::Body>,

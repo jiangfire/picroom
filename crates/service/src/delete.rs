@@ -7,9 +7,11 @@
 //! row and a best-effort removal of the original object from storage, then
 //! emits an audit event. Callers remain responsible for authorization checks.
 
+use crate::authz::AuthzService;
 use crate::repo::ImageRepository;
 use crate::ServiceError;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
+use picroom_auth::Actor;
 use picroom_domain::Image;
 use picroom_storage::StorageWriter;
 use std::sync::Arc;
@@ -22,6 +24,9 @@ pub struct DeleteService {
     storage: Arc<dyn StorageWriter + Send + Sync>,
     repo: Arc<dyn ImageRepository>,
     audit: Arc<dyn AuditSink>,
+    /// Authorization coordinator. Defaults to the engine-only service; the
+    /// binary wiring installs the backend-backed one.
+    authz: AuthzService,
 }
 
 impl DeleteService {
@@ -35,15 +40,36 @@ impl DeleteService {
             storage,
             repo,
             audit,
+            authz: AuthzService::without_backends(),
         }
+    }
+
+    /// Sets the authorization coordinator. Deletion is denied unless the
+    /// actor owns the image, holds `Image/Delete` (manager/admin), or is
+    /// allowed by the image's ACL — evaluated in the spec §10.3 order.
+    pub fn with_authz(mut self, authz: Arc<AuthzService>) -> Self {
+        self.authz = (*authz).clone();
+        self
     }
 
     /// Deletes an image (DB row + storage object) and emits an audit event.
     ///
-    /// Takes the already-resolved [`Image`] so callers can perform authorization
-    /// and avoid a redundant lookup. This method only performs the deletion and
-    /// records the audit event.
-    pub async fn delete(&self, image: Image) -> Result<(), ServiceError> {
+    /// Takes the already-resolved [`Image`] so callers avoid a redundant
+    /// lookup. Enforcement happens here, in the service layer, so every path
+    /// that reaches deletion is authorized (D-7) — not just the HTTP route.
+    pub async fn delete(&self, actor: &Actor, image: Image) -> Result<(), ServiceError> {
+        self.authz
+            .authorize(
+                actor,
+                &picroom_auth::Resource::new(
+                    picroom_domain::permission::ResourceType::Image,
+                    image.id.as_uuid(),
+                    Some(image.owner_id.as_uuid()),
+                    image.team_id.map(|t| t.as_uuid()),
+                ),
+                picroom_auth::PermissionAction::Delete,
+            )
+            .await?;
         // Remove the original object (best-effort — a missing blob must not
         // block the logical delete).
         if let Err(e) = self.storage.delete(&image.key).await {
@@ -155,8 +181,13 @@ mod tests {
         });
         let audit = Arc::new(InMemoryAuditSink::new());
         let svc = DeleteService::new(storage.clone(), repo.clone(), audit.clone());
+        let owner = uuid::Uuid::now_v7();
+        let mut img = fake_image();
+        img.owner_id = picroom_domain::UserId(owner);
 
-        svc.delete(fake_image()).await.unwrap();
+        svc.delete(&picroom_auth::Actor::with_roles(owner, vec![]), img)
+            .await
+            .unwrap();
 
         assert_eq!(repo.deletes.load(Ordering::SeqCst), 1);
         assert_eq!(storage.deletes.load(Ordering::SeqCst), 1);

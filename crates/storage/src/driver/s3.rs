@@ -81,7 +81,7 @@ pub struct S3Driver {
 
 impl S3Driver {
     /// Creates a new S3 driver.
-    pub async fn new(config: S3Config) -> Result<Self, StorageError> {
+    pub fn new(config: S3Config) -> Result<Self, StorageError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(5))
@@ -654,12 +654,12 @@ impl StorageSigner for S3Driver {
         // canonical request, which we set to GET above). Replace it.
         drop(q);
         // Recompute signature with PUT method.
-        self.sign_for_method(&mut url, "PUT").await
+        self.sign_for_method(&mut url, "PUT")
     }
 }
 
 impl S3Driver {
-    async fn sign_for_method(&self, url: &mut Url, method: &str) -> Result<Url, StorageError> {
+    fn sign_for_method(&self, url: &mut Url, method: &str) -> Result<Url, StorageError> {
         let now = OffsetDateTime::now_utc();
         let amz_date = format!(
             "{:04}{:02}{:02}T{:02}{:02}{:02}Z",

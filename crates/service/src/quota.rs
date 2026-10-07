@@ -84,21 +84,6 @@ impl QuotaService {
             None => Ok(u64::MAX),
         }
     }
-
-    /// Returns remaining bytes for the team.
-    ///
-    /// Team-level quotas are not yet modeled; this always reports unlimited.
-    pub async fn remaining_team(&self, _team_id: Uuid) -> Result<u64, ServiceError> {
-        Ok(u64::MAX)
-    }
-
-    /// Charges `bytes` against the user's quota.
-    ///
-    /// Enforcement happens pre-upload via [`QuotaService::remaining_user`];
-    /// this is a retained no-op hook kept for API compatibility.
-    pub async fn charge_user(&self, _user_id: Uuid, _bytes: u64) -> Result<(), ServiceError> {
-        Ok(())
-    }
 }
 
 impl std::fmt::Debug for QuotaService {
@@ -148,17 +133,5 @@ mod tests {
     async fn remaining_user_unbacked_is_unlimited() {
         let q = QuotaService::new();
         assert_eq!(q.remaining_user(Uuid::now_v7()).await.unwrap(), u64::MAX);
-    }
-
-    #[tokio::test]
-    async fn remaining_team_is_always_unlimited() {
-        let q = QuotaService::new();
-        assert_eq!(q.remaining_team(Uuid::now_v7()).await.unwrap(), u64::MAX);
-    }
-
-    #[tokio::test]
-    async fn charge_user_is_a_noop() {
-        let q = QuotaService::new();
-        assert!(q.charge_user(Uuid::now_v7(), 10).await.is_ok());
     }
 }

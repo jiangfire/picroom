@@ -74,20 +74,48 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         cfg.auth.jwt_ttl_secs,
     ));
     // Unified delete service: routes DELETE through storage + repo + audit.
-    let delete_service = deps.image_repo.as_ref().map(|repo| {
-        Arc::new(picroom_service::DeleteService::new(
-            storage_writer.clone(),
-            repo.clone(),
-            deps.audit.clone(),
-        ))
-    });
-    // Storage-policy repo is only available on PostgreSQL.
+    // Authorization (owner / ACL / RBAC) is enforced inside the service (D-7).
+    // Session + ACL repositories are only available on PostgreSQL.
+    let (session_repo, acl_repo): (
+        Option<Arc<dyn picroom_service::SessionRepository>>,
+        Option<Arc<dyn picroom_service::ResourceAclRepository>>,
+    ) = match &deps.db {
+        Some(DatabaseHandle::Pg(pool)) => (
+            Some(Arc::new(picroom_service::PgSessionRepository::new(
+                pool.clone(),
+            ))),
+            Some(Arc::new(picroom_service::PgResourceAclRepository::new(
+                pool.clone(),
+            ))),
+        ),
+        _ => (None, None),
+    };
     let storage_policy_repo: Option<Arc<dyn StoragePolicyRepository>> = match &deps.db {
         Some(DatabaseHandle::Pg(pool)) => {
             Some(Arc::new(PgStoragePolicyRepository::new(pool.clone())))
         }
         _ => None,
     };
+    // Authorization coordinator: engine + ACL + team backends (engine-only in
+    // dev mode, where global roles and ownership still apply).
+    let authz = match (&acl_repo, &deps.team_repo) {
+        (Some(acls), Some(teams)) => Arc::new(picroom_service::AuthzService::new(
+            acls.clone(),
+            teams.clone(),
+        )),
+        _ => Arc::new(picroom_service::AuthzService::without_backends()),
+    };
+    upload = upload.with_authz(authz.clone());
+    let delete_service = deps.image_repo.as_ref().map(|repo| {
+        Arc::new(
+            picroom_service::DeleteService::new(
+                storage_writer.clone(),
+                repo.clone(),
+                deps.audit.clone(),
+            )
+            .with_authz(authz.clone()),
+        )
+    });
 
     let state = Arc::new(AppState {
         upload: Arc::new(upload),
@@ -108,13 +136,27 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         oidc_providers: Arc::new(cfg.auth.oidc.providers.clone()),
         oidc_admin_emails: Arc::new(cfg.auth.oidc.admin_emails.clone().into_iter().collect()),
         cookie_secure: cfg.auth.oidc.secure_cookies,
+        session_repo,
+        acl_repo,
+        authz,
     });
 
     // Build router with body size limit.
-    let max_body_bytes = (cfg.server.max_body_mb as usize) * 1024 * 1024;
-    let router = picroom_api::build_router(state).layer(
-        tower_http::limit::RequestBodyLimitLayer::new(max_body_bytes),
+    //
+    // `DefaultBodyLimit` is what axum's extractors (`Bytes`, `Multipart`)
+    // actually consult — its extractor-level default caps bodies at 2 MiB and
+    // `RequestBodyLimitLayer` does not touch it (R-06), so `server.max_body_mb`
+    // was unreachable. The transport layer stays as an outer backstop.
+    anyhow::ensure!(
+        cfg.server.max_body_mb > 0,
+        "server.max_body_mb must be greater than 0"
     );
+    let max_body_bytes = (cfg.server.max_body_mb as usize) * 1024 * 1024;
+    let router = picroom_api::build_router(state)
+        .layer(axum::extract::DefaultBodyLimit::max(max_body_bytes))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            max_body_bytes,
+        ));
 
     tracing::info!("picroom api listening on {addr}");
 

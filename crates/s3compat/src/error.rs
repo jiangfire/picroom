@@ -34,6 +34,17 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Builds an S3-compatible XML error response with an escaped message.
+/// The single error renderer for the whole `/s3` surface (handlers included),
+/// so no code path can emit unescaped client text into an XML body.
+pub(crate) fn xml_error(status: StatusCode, code: &str, message: &str) -> Response {
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{msg}</Message></Error>",
+        msg = xml_escape(message)
+    );
+    (status, [(header::CONTENT_TYPE, "application/xml")], body).into_response()
+}
+
 impl IntoResponse for S3Error {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
@@ -43,11 +54,7 @@ impl IntoResponse for S3Error {
             Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalError"),
         };
         // AWS clients (aws-cli, rclone, PicGo) parse XML errors, not JSON.
-        let body = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{msg}</Message></Error>",
-            msg = xml_escape(&self.to_string())
-        );
-        (status, [(header::CONTENT_TYPE, "application/xml")], body).into_response()
+        xml_error(status, code, &self.to_string())
     }
 }
 

@@ -9,11 +9,13 @@
 //! persistence of the metadata row is the caller's responsibility
 //! (see `repo::ImageRepository`).
 
+use crate::authz::AuthzService;
 use crate::QuotaService;
 use crate::ServiceError;
 use bytes::Bytes;
 use picroom_audit::{AuditAction, AuditEvent, AuditSink};
-use picroom_domain::{DomainError, Image, ImageId, StorageKey, UserId};
+use picroom_auth::Actor;
+use picroom_domain::{DomainError, Image, ImageId, StorageKey, TeamId, UserId};
 use picroom_imaging::processor::probe::probe_into;
 use picroom_imaging::PipelineContext;
 use picroom_storage::{StorageError, StorageWriter};
@@ -49,6 +51,10 @@ pub struct UploadService {
     pub enable_webp: bool,
     /// Quota service used to enforce per-user byte caps.
     pub quota: QuotaService,
+    /// Authorization coordinator. Defaults to the engine-only service (global
+    /// roles + ownership still apply); the binary wiring installs the
+    /// backend-backed one so ACL rows and team roles are consulted too.
+    pub authz: AuthzService,
 }
 
 impl UploadService {
@@ -67,7 +73,14 @@ impl UploadService {
             enable_avif: true,
             enable_webp: true,
             quota: QuotaService::new(),
+            authz: AuthzService::without_backends(),
         }
+    }
+
+    /// Sets the authorization coordinator used to enforce `Image/Create`.
+    pub fn with_authz(mut self, authz: Arc<AuthzService>) -> Self {
+        self.authz = (*authz).clone();
+        self
     }
 
     /// Sets the default storage policy name (default: `"default"`).
@@ -117,14 +130,44 @@ impl UploadService {
         &self.storage
     }
 
-    /// Validates, probes, persists, records audit, and enqueues variant jobs.
+    /// Validates, probes, persists, and records audit — everything up to and
+    /// including the storage write, but **no job enqueue**.
+    ///
+    /// Enforces `Image/Create` for the [`Actor`] before any bytes are stored:
+    /// a team-scoped upload requires `Image/Create` within that team (i.e.
+    /// team `uploader` and above); a personal upload requires the global
+    /// permission. The `team_id` is attributed server-side — callers cannot
+    /// bind an arbitrary team onto the row (R-13).
+    ///
+    /// Callers persist the returned `Image` via the repository and only then
+    /// call [`Self::enqueue_variants`]. Enqueueing any earlier lets a fast
+    /// worker claim a job whose `images` row does not exist yet, dead-lettering
+    /// a perfectly valid upload (R-04).
     #[allow(clippy::too_many_lines)]
-    pub async fn upload(
+    pub async fn stage(
         &self,
-        owner_id: UserId,
+        actor: &Actor,
+        team_id: Option<TeamId>,
         content_type: &str,
         bytes: Bytes,
     ) -> Result<Image, ServiceError> {
+        // 0. Authorization — before quota, probe, or storage. Enforced here so
+        // every path into staging is authorized, with no HTTP layer involved.
+        self.authz
+            .authorize(
+                actor,
+                &picroom_auth::Resource::new(
+                    picroom_domain::permission::ResourceType::Image,
+                    Uuid::nil(), // not yet created; team scope is what matters
+                    None,
+                    team_id.map(|t| t.as_uuid()),
+                ),
+                picroom_auth::PermissionAction::Create,
+            )
+            .await?;
+
+        let owner_id = UserId(actor.user_id);
+
         // 1. Size check
         if bytes.is_empty() {
             return Err(DomainError::Validation("empty payload".into()).into());
@@ -156,11 +199,13 @@ impl UploadService {
             .into());
         }
 
-        // 3. Probe (populate width/height/mime)
+        // 3. Probe (populate width/height/mime). Decoder errors carry parser
+        // internals — log the cause, return a generic validation error (R-19).
         let mut ctx = PipelineContext::default();
-        probe_into(&mut ctx, bytes.clone())
-            .await
-            .map_err(|e| ServiceError::Internal(format!("probe failed: {e}")))?;
+        if let Err(e) = probe_into(&mut ctx, bytes.clone()).await {
+            tracing::warn!(error = %e, "upload probe failed");
+            return Err(DomainError::Validation("unsupported or corrupt image".into()).into());
+        }
 
         // 4. Persist original
         let id = Uuid::now_v7();
@@ -176,7 +221,7 @@ impl UploadService {
         let image = Image {
             id: ImageId(id),
             owner_id,
-            team_id: None,
+            team_id,
             key,
             content_type: content_type.to_string(),
             bytes: bytes.len() as u64,
@@ -211,53 +256,78 @@ impl UploadService {
             .await
             .map_err(ServiceError::Audit)?;
 
-        // 7. Enqueue variant-generation jobs (best-effort).
-        if let Some(queue) = &self.job_queue {
-            let enqueued_at = OffsetDateTime::now_utc();
-            if self.enable_avif {
-                if let Err(e) = queue
-                    .enqueue(Job {
-                        id: Uuid::now_v7(),
-                        image_id: image.id,
-                        kind: JobKind::EncodeAvif,
-                        attempts: 0,
-                        enqueued_at,
-                    })
-                    .await
-                {
-                    tracing::warn!(error = %e, "failed to enqueue avif job");
-                }
-            }
-            if self.enable_webp {
-                if let Err(e) = queue
-                    .enqueue(Job {
-                        id: Uuid::now_v7(),
-                        image_id: image.id,
-                        kind: JobKind::EncodeWebp,
-                        attempts: 0,
-                        enqueued_at,
-                    })
-                    .await
-                {
-                    tracing::warn!(error = %e, "failed to enqueue webp job");
-                }
-            }
-            for size in &self.thumbnail_sizes {
-                if let Err(e) = queue
-                    .enqueue(Job {
-                        id: Uuid::now_v7(),
-                        image_id: image.id,
-                        kind: JobKind::GenerateThumbnail { size: *size },
-                        attempts: 0,
-                        enqueued_at,
-                    })
-                    .await
-                {
-                    tracing::warn!(error = %e, "failed to enqueue thumbnail job");
-                }
+        Ok(image)
+    }
+
+    /// Enqueues the variant-generation jobs for a staged image.
+    ///
+    /// Must be called only after the `images` row is committed, so a worker
+    /// can never observe a job without its image (R-04). Enqueue failures are
+    /// logged and skipped: the bytes are already persisted and the job can be
+    /// re-created by re-running the encoder; failing the upload here would
+    /// strand the stored original.
+    pub async fn enqueue_variants(&self, image: &Image) {
+        let Some(queue) = &self.job_queue else {
+            return;
+        };
+        let enqueued_at = OffsetDateTime::now_utc();
+        if self.enable_avif {
+            if let Err(e) = queue
+                .enqueue(Job {
+                    id: Uuid::now_v7(),
+                    image_id: image.id,
+                    kind: JobKind::EncodeAvif,
+                    attempts: 0,
+                    enqueued_at,
+                })
+                .await
+            {
+                tracing::warn!(error = %e, "failed to enqueue avif job");
             }
         }
+        if self.enable_webp {
+            if let Err(e) = queue
+                .enqueue(Job {
+                    id: Uuid::now_v7(),
+                    image_id: image.id,
+                    kind: JobKind::EncodeWebp,
+                    attempts: 0,
+                    enqueued_at,
+                })
+                .await
+            {
+                tracing::warn!(error = %e, "failed to enqueue webp job");
+            }
+        }
+        for size in &self.thumbnail_sizes {
+            if let Err(e) = queue
+                .enqueue(Job {
+                    id: Uuid::now_v7(),
+                    image_id: image.id,
+                    kind: JobKind::GenerateThumbnail { size: *size },
+                    attempts: 0,
+                    enqueued_at,
+                })
+                .await
+            {
+                tracing::warn!(error = %e, "failed to enqueue thumbnail job");
+            }
+        }
+    }
 
+    /// Validates, probes, persists, records audit, and enqueues variant jobs.
+    ///
+    /// Convenience for callers that have no repository step between staging
+    /// and enqueueing. Prefer [`Self::stage`] + [`Self::enqueue_variants`]
+    /// when a DB row must be inserted in between (the HTTP upload path does).
+    pub async fn upload(
+        &self,
+        actor: &Actor,
+        content_type: &str,
+        bytes: Bytes,
+    ) -> Result<Image, ServiceError> {
+        let image = self.stage(actor, None, content_type, bytes).await?;
+        self.enqueue_variants(&image).await;
         Ok(image)
     }
 }

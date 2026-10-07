@@ -16,6 +16,21 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Walks a multipart error's source chain looking for a body-length-limit
+/// failure. axum's `DefaultBodyLimit` and tower-http's `RequestBodyLimitLayer`
+/// raise "length limit exceeded" (the `LengthLimitError` text); multer wraps
+/// the transport error, so match the documented message rather than the type.
+fn is_body_limit_error(err: &axum::extract::multipart::MultipartError) -> bool {
+    let mut src: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = src {
+        if e.to_string().contains("length limit exceeded") {
+            return true;
+        }
+        src = e.source();
+    }
+    false
+}
+
 /// `POST /api/v1/images` — multipart upload.
 ///
 /// Accepts a `file` field (binary) and an optional `team_id` form field.
@@ -29,11 +44,21 @@ pub async fn upload(
     let mut content_type: Option<String> = None;
     let mut team_id: Option<Uuid> = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::bad_request(format!("multipart error: {e}")))?
-    {
+    // A body over the configured limit surfaces as a length-limit error inside
+    // the multipart stream. Multer wraps the transport error, so walk the
+    // source chain to recognise it and answer 413 instead of flattening every
+    // parse failure into 400.
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        if is_body_limit_error(&e) {
+            ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload_too_large",
+                "request body exceeds the configured limit",
+            )
+        } else {
+            ApiError::bad_request(format!("multipart error: {e}"))
+        }
+    })? {
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
@@ -64,17 +89,22 @@ pub async fn upload(
     let bytes = file_bytes.ok_or_else(|| ApiError::bad_request("missing 'file' field"))?;
     let mime = content_type.unwrap_or_else(|| "application/octet-stream".to_string());
 
-    // Attribute the upload to the authenticated principal (never the dev user).
-    let actor = auth.user_id;
-
-    let mut image = match state.upload.upload(actor, &mime, bytes).await {
+    // 1. Validate + persist bytes (no jobs yet). The service layer enforces
+    // `Image/Create` — including team-scope validation for the `team_id`
+    // field, which is attributed server-side (R-05, R-13, D-7).
+    let actor = auth.actor();
+    let image = match state
+        .upload
+        .stage(&actor, team_id.map(TeamId), &mime, bytes)
+        .await
+    {
         Ok(i) => i,
         Err(e) => {
             let s = format!("{e}");
             if s.contains("empty")
                 || s.contains("exceeds")
                 || s.contains("unsupported")
-                || s.contains("probe")
+                || s.contains("corrupt")
             {
                 return Err(ApiError::bad_request(s));
             }
@@ -83,17 +113,22 @@ pub async fn upload(
         }
     };
 
-    // Associate the upload with a team when one was supplied.
-    image.team_id = team_id.map(TeamId);
-
-    // Persist metadata if a repo is configured.
+    // 2. Persist metadata if a repo is configured. On failure the stored
+    // object is removed — an orphan blob nobody can address must not survive
+    // a failed upload (R-19).
     if let Some(repo) = &state.image_repo {
         if let Err(e) = repo.insert(&image).await {
             tracing::error!("repo insert failed: {e}");
-            // Image is in storage; surface a 500.
+            if let Err(del) = state.storage.delete(&image.key).await {
+                tracing::error!(key = %image.key.as_str(), error = %del, "orphan cleanup failed");
+            }
             return Err(ApiError::internal(format!("insert failed: {e}")));
         }
     }
+
+    // 3. Only after the row is committed, enqueue variant jobs — a worker that
+    // claims a job must be able to load its `images` row (R-04).
+    state.upload.enqueue_variants(&image).await;
 
     Ok(axum::Json(json!({
         "id": image.id.to_string(),
@@ -214,21 +249,24 @@ pub async fn delete(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    // IDOR check: only the owner, or a principal permitted to delete images
-    // (manager/admin via RBAC), may delete this image.
-    if auth.user_id != image.owner_id
-        && state
+    // Authorization happens inside the DeleteService (owner / ACL / RBAC, in
+    // the spec §10.3 order) — the route keeps authentication only (D-7).
+    // Without a DB-backed service the route-level gate below is the only
+    // defense, so it stays as the dev-mode fallback.
+    let authorized = auth.user_id == image.owner_id
+        || state
             .permissions
             .check(&auth.roles, ResourceType::Image, PermissionAction::Delete)
-            .is_err()
-    {
-        return Err(ApiError::forbidden("not allowed"));
-    }
-    // Route deletion through the unified DeleteService (storage + DB + audit).
-    // The already-fetched `image` is passed in so we don't look it up twice.
+            .is_ok();
     match &state.delete_service {
-        Some(svc) => svc.delete(image).await.map_err(ApiError::from)?,
+        Some(svc) => svc
+            .delete(&auth.actor(), image)
+            .await
+            .map_err(ApiError::from)?,
         None => {
+            if !authorized {
+                return Err(ApiError::forbidden("not allowed"));
+            }
             // Defensive fallback for environments without a DB-backed service.
             if let Err(e) = state.storage.delete(&image.key).await {
                 tracing::warn!("storage delete failed: {e}");

@@ -4,6 +4,7 @@
 //! Auth handlers — login, logout, OIDC.
 
 use crate::error::ApiError;
+use crate::extractors::auth::AuthUser;
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -61,9 +62,28 @@ pub async fn login(
 
     // Issue a JWT keyed on the user id (not the email) with the role as scope.
     let scopes = vec![creds.role.clone()];
+    // Bind the token to a revocable session when one can be recorded (D-6):
+    // `logout` and disabling the user then invalidate the token immediately.
+    let sid = match &state.session_repo {
+        Some(sessions) => {
+            let sid = uuid::Uuid::now_v7();
+            let expires_at =
+                time::OffsetDateTime::now_utc() + time::Duration::seconds(state.jwt.ttl_secs());
+            sessions
+                .create(&picroom_service::repo::SessionRow {
+                    id: sid,
+                    user_id: creds.id.as_uuid(),
+                    expires_at,
+                })
+                .await
+                .map_err(|e| ApiError::internal(format!("session create: {e}")))?;
+            Some(sid.to_string())
+        }
+        None => None,
+    };
     let token = state
         .jwt
-        .issue_with_scopes(creds.id.to_string(), &scopes)
+        .issue_session(creds.id.to_string(), &scopes, sid)
         .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
 
     Ok(Json(serde_json::json!({
@@ -83,8 +103,23 @@ pub struct LoginBody {
 }
 
 /// `POST /api/v1/auth/logout`
-pub async fn logout() -> impl IntoResponse {
-    StatusCode::NO_CONTENT
+///
+/// Revokes the session the token is bound to, so the bearer token stops
+/// working immediately instead of living out its TTL (R-08). Idempotent: a
+/// token without a session (dev mode) still gets `204`.
+pub async fn logout(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<StatusCode, ApiError> {
+    if let Some(sid) = auth.session_id {
+        if let Some(sessions) = &state.session_repo {
+            sessions
+                .revoke(sid)
+                .await
+                .map_err(|e| ApiError::internal(format!("session revoke: {e}")))?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /api/v1/auth/oidc/:provider/login`

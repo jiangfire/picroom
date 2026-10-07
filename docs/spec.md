@@ -774,7 +774,7 @@ See `migrations/*.sql` for exact DDL.
 | `team_members` | user ↔ team with role |
 | `roles` | role definition per team |
 | `permissions` | role × action × resource_type |
-| `storage_policies` | named storage configs (local / S3 / OSS / …) |
+| `storage_policies` | named storage configs (local / S3; MinIO via S3 driver). OSS / COS / Qiniu planned but not implemented (ADR-0003) |
 | `images` | image metadata, owner, key, dims, hashes |
 | `image_variants` | derived variants (avif, webp, thumb) |
 | `api_tokens` | long-lived bearer tokens for scripts |
@@ -809,10 +809,20 @@ Custom roles can be created per-team with arbitrary permission sets.
 
 ### 10.3 Evaluation order
 
-1. Explicit deny rule (highest priority).
-2. Team membership role.
-3. Resource-level ACL (e.g., shared with specific user).
-4. Default deny.
+1. Explicit deny rule (highest priority — **overrides the `admin` role**).
+2. Resource ownership (`owner_id` match).
+3. Team membership role (for the resource's team scope).
+4. Resource-level ACL allow (e.g., shared with a specific user).
+5. Global role default permissions.
+6. Default deny.
+
+Global `uploader`/`manager` roles do not apply inside another team's scope;
+team-shared images require team membership (or an ACL grant, or admin).
+Enforcement lives in the service layer (`UploadService`, `DeleteService`);
+route handlers authenticate only. ACL management endpoints exist for images
+(`GET/PUT /api/v1/images/{id}/acl`, `DELETE .../acl/{subjectType}/{subjectId}`),
+replace-semantics on `PUT`; the `resource_acls` table carries an `effect`
+column (`allow`/`deny`) and is resource-agnostic.
 
 ---
 
@@ -913,7 +923,7 @@ Brings up: API, worker, PostgreSQL, MinIO. Single port (8080) exposed.
 - Deployment × 3 replicas for `picroom-api`.
 - Deployment × 2 replicas for `picroom-worker`.
 - Managed PostgreSQL (or self-hosted with HA).
-- S3 / OSS / MinIO for object storage.
+- S3-compatible object storage (AWS S3, MinIO, or any SigV4 endpoint).
 - Redis (optional) for caching.
 - Ingress (nginx / Traefik) with TLS termination.
 

@@ -59,15 +59,20 @@ impl ImageProcessor {
     pub async fn process(deps: &ProcessorDeps, job: Job) -> Result<JobResult, String> {
         match &job.kind {
             JobKind::EncodeAvif => {
-                encode_variant(deps, &job, "avif", None, Box::new(avif_encode)).await
+                encode_variant(deps, &job, "avif", None, "avif", Box::new(avif_encode)).await
             }
             JobKind::EncodeWebp => {
-                encode_variant(deps, &job, "webp", None, Box::new(webp_encode)).await
+                encode_variant(deps, &job, "webp", None, "webp", Box::new(webp_encode)).await
             }
             JobKind::GenerateThumbnail { size } => {
                 let size = *size;
                 let enc: Encoder = Box::new(move |img| thumbnail_encode(img, size));
-                encode_variant(deps, &job, &format!("thumbnail_{size}"), Some(size), enc).await
+                // DB identity is `kind='thumbnail', size=<n>` (the CHECK
+                // constraint on `image_variants.kind` admits `thumbnail` only);
+                // the storage key keeps the size suffix so thumbnails of
+                // different sizes do not collide.
+                let key_name = format!("thumbnail_{size}");
+                encode_variant(deps, &job, "thumbnail", Some(size), &key_name, enc).await
             }
             JobKind::ApplyWatermark => Err("watermark not yet implemented".into()),
             JobKind::StripExif => Err("strip-exif not yet implemented".into()),
@@ -88,6 +93,7 @@ async fn encode_variant(
     job: &Job,
     kind: &str,
     size: Option<u32>,
+    key_name: &str,
     encoder: Encoder,
 ) -> Result<JobResult, String> {
     let image = deps
@@ -113,7 +119,7 @@ async fn encode_variant(
         .map_err(|e| format!("encode: {e}"))?;
 
     // Persist variant to storage.
-    let key = variant_key(&image, kind)?;
+    let key = variant_key(&image, key_name)?;
     deps.storage
         .put(&key, bytes.clone())
         .await
@@ -126,21 +132,20 @@ async fn encode_variant(
         _ => "image/jpeg", // thumbnails are JPEG
     };
 
-    // Persist variant metadata to DB (best-effort).
+    // Persist variant metadata to DB. A failed insert must fail the job so it
+    // retries or dead-letters — bytes in storage with no visible row are the
+    // "success that isn't" this code path exists to prevent.
     if let Some(repo) = &deps.variant_repo {
-        if let Err(e) = repo
-            .insert_variant(
-                job.image_id,
-                kind,
-                size,
-                key.as_str(),
-                bytes.len() as u64,
-                content_type,
-            )
-            .await
-        {
-            tracing::warn!(error = %e, "failed to insert image_variant row");
-        }
+        repo.insert_variant(
+            job.image_id,
+            kind,
+            size,
+            key.as_str(),
+            bytes.len() as u64,
+            content_type,
+        )
+        .await
+        .map_err(|e| format!("insert image_variant row: {e}"))?;
     }
 
     Ok(JobResult::Variant {
@@ -150,9 +155,9 @@ async fn encode_variant(
     })
 }
 
-fn variant_key(image: &Image, kind: &str) -> Result<StorageKey, String> {
+fn variant_key(image: &Image, name: &str) -> Result<StorageKey, String> {
     let id = image.id.as_uuid();
-    let key = format!("img/{id}/{kind}");
+    let key = format!("img/{id}/{name}");
     StorageKey::parse(&key).map_err(|e| format!("invalid variant key \"{key}\": {e}"))
 }
 
@@ -213,6 +218,9 @@ pub fn make_dlq_entry(job: &Job, error: String) -> DlqEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dlq::InMemoryDlq;
+    use picroom_storage::driver::LocalDriver;
+    use std::path::PathBuf;
 
     #[test]
     fn variant_key_uses_id_and_kind() {
@@ -232,5 +240,144 @@ mod tests {
         };
         let k = variant_key(&img, "avif").expect("valid key");
         assert_eq!(k.as_str(), &format!("img/{id}/avif"));
+    }
+
+    /// Recorded `insert_variant` calls: `(kind, size)` pairs.
+    type RecordedCalls = Arc<std::sync::Mutex<Vec<(String, Option<u32>)>>>;
+
+    /// Records `insert_variant` calls; optionally fails.
+    #[derive(Default, Clone)]
+    struct RecordingRepo {
+        calls: RecordedCalls,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl VariantRepository for RecordingRepo {
+        async fn insert_variant(
+            &self,
+            _image_id: ImageId,
+            kind: &str,
+            size: Option<u32>,
+            _storage_key: &str,
+            _bytes: u64,
+            _content_type: &str,
+        ) -> Result<(), String> {
+            if self.fail {
+                return Err("forced insert failure".into());
+            }
+            self.calls
+                .lock()
+                .expect("mutex poisoned")
+                .push((kind.to_string(), size));
+            Ok(())
+        }
+    }
+
+    fn test_image(png: Bytes) -> (Image, Arc<dyn Storage>) {
+        let dir: PathBuf =
+            std::env::temp_dir().join(format!("picroom-proc-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage: Arc<dyn Storage> = Arc::new(LocalDriver::new(dir, "/i"));
+        let id = uuid::Uuid::now_v7();
+        let key = StorageKey::parse("img/test-original.png").unwrap();
+        let img = Image {
+            id: ImageId(id),
+            owner_id: picroom_domain::UserId(uuid::Uuid::nil()),
+            team_id: None,
+            key: key.clone(),
+            content_type: "image/png".into(),
+            bytes: png.len() as u64,
+            width: 100,
+            height: 80,
+            sha256: None,
+            variants: vec![],
+            created_at: OffsetDateTime::now_utc(),
+        };
+        // Store the original so the processor can read it back.
+        futures::executor::block_on(storage.put(&key, png)).unwrap();
+        (img, storage)
+    }
+
+    fn png_bytes() -> Bytes {
+        use std::io::Cursor;
+        let img = image::RgbImage::from_fn(100, 80, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let mut buf = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        Bytes::from(buf)
+    }
+
+    fn deps_for(
+        img: &Image,
+        storage: Arc<dyn Storage>,
+        repo: Arc<dyn VariantRepository + Send + Sync>,
+    ) -> ProcessorDeps {
+        struct Lookup(Image);
+        #[async_trait]
+        impl ImageLookup for Lookup {
+            async fn lookup(&self, _id: ImageId) -> Result<Image, String> {
+                Ok(self.0.clone())
+            }
+        }
+        ProcessorDeps {
+            image_lookup: Arc::new(Lookup(img.clone())),
+            storage,
+            dlq: Some(Arc::new(InMemoryDlq::new())),
+            variant_repo: Some(repo),
+        }
+    }
+
+    /// R-02: the thumbnail row identity must be `kind='thumbnail'` with the
+    /// size carried in `size` — `thumbnail_200` violates the DB CHECK
+    /// constraint, so the row insert failed and the job reported success.
+    #[tokio::test]
+    async fn thumbnail_job_persists_row_as_kind_thumbnail_with_size() {
+        let (img, storage) = test_image(png_bytes());
+        let repo = Arc::new(RecordingRepo::default());
+        let deps = deps_for(&img, storage, repo.clone());
+        let job = Job {
+            id: uuid::Uuid::now_v7(),
+            image_id: img.id,
+            kind: JobKind::GenerateThumbnail { size: 200 },
+            attempts: 0,
+            enqueued_at: OffsetDateTime::now_utc(),
+        };
+        let result = ImageProcessor::process(&deps, job).await.expect("job ok");
+        let calls = repo.calls.lock().expect("mutex poisoned");
+        assert_eq!(*calls, vec![("thumbnail".to_string(), Some(200))]);
+        let JobResult::Variant { kind, key, .. } = result else {
+            panic!("expected a Variant result");
+        };
+        assert_eq!(kind, "thumbnail");
+        assert!(
+            key.ends_with("/thumbnail_200"),
+            "storage key keeps the size: {key}"
+        );
+    }
+
+    /// R-02: a failed variant-row insert must fail the job (retry/DLQ), not
+    /// be swallowed as a warning while the job reports success.
+    #[tokio::test]
+    async fn insert_failure_fails_the_job() {
+        let (img, storage) = test_image(png_bytes());
+        let repo = Arc::new(RecordingRepo {
+            fail: true,
+            calls: <RecordedCalls as Default>::default(),
+        });
+        let deps = deps_for(&img, storage, repo);
+        let job = Job {
+            id: uuid::Uuid::now_v7(),
+            image_id: img.id,
+            kind: JobKind::GenerateThumbnail { size: 400 },
+            attempts: 0,
+            enqueued_at: OffsetDateTime::now_utc(),
+        };
+        let result = ImageProcessor::process(&deps, job).await;
+        assert!(
+            result.is_err(),
+            "insert failure must surface as a job error"
+        );
     }
 }

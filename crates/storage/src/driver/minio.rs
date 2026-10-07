@@ -8,7 +8,7 @@
 use crate::driver::s3::{S3Config, S3Driver};
 
 /// Convenience constructor for `MinIO`.
-pub async fn minio(
+pub fn minio(
     bucket: impl Into<String>,
     region: impl Into<String>,
     access_key_id: impl Into<String>,
@@ -18,7 +18,7 @@ pub async fn minio(
     let config = S3Config::new(bucket, region, access_key_id, secret_access_key)
         .with_endpoint(endpoint)
         .with_path_style(true);
-    S3Driver::new(config).await
+    S3Driver::new(config)
 }
 
 /// Alias for [`S3Driver`] (semantically the same; `MinIO` is S3-compatible).

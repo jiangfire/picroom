@@ -48,6 +48,35 @@ pub struct Permission {
     pub action: PermissionAction,
 }
 
+impl ResourceType {
+    /// Lower-case string identifier (matches the `resource_acls.resource_type`
+    /// column convention used by the repositories).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Team => "team",
+            Self::User => "user",
+            Self::Audit => "audit",
+            Self::StoragePolicy => "storage_policy",
+            Self::System => "system",
+        }
+    }
+}
+
+impl PermissionAction {
+    /// Lower-case string identifier (matches the `resource_acls.permission`
+    /// CHECK constraint).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+            Self::Admin => "admin",
+        }
+    }
+}
+
 impl Permission {
     /// Constructs a new permission.
     pub const fn new(resource: ResourceType, action: PermissionAction) -> Self {

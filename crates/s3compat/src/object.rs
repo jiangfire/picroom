@@ -3,8 +3,10 @@
 
 //! Object-level handlers — PUT/GET/HEAD/DELETE backed by `Storage`.
 
+use crate::error::xml_error;
+use crate::multipart::multipart_rejection;
 use crate::S3State;
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -40,7 +42,7 @@ pub async fn get_object<S: S3State>(
 ) -> Response {
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
-        Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
+        Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
     match state.storage().get(&storage_key).await {
         Ok(bytes) => (
@@ -54,22 +56,30 @@ pub async fn get_object<S: S3State>(
         )
             .into_response(),
         Err(picroom_storage::StorageError::NotFound(_)) => {
-            s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key)
+            xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key)
         }
         Err(e) => internal_error(e),
     }
 }
 
 /// `PUT /s3/:bucket/:key`
+///
+/// Rejects multipart-shaped requests (`partNumber`/`uploadId`) with `501`
+/// *before* touching storage — routing them here must not overwrite an
+/// existing object with a single fragment (R-01).
 pub async fn put_object<S: S3State>(
     State(state): State<Arc<S>>,
     Path((_bucket, key)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
     _headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Some(rejection) = multipart_rejection(query.as_deref()) {
+        return rejection;
+    }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
-        Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
+        Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
     let etag = etag_of(&body);
     match state.storage().put(&storage_key, body).await {
@@ -85,23 +95,30 @@ pub async fn head_object<S: S3State>(
 ) -> Response {
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
-        Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
+        Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
     match state.storage().exists(&storage_key).await {
         Ok(true) => StatusCode::OK.into_response(),
-        Ok(false) => s3_xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key),
+        Ok(false) => xml_error(StatusCode::NOT_FOUND, "NoSuchKey", &key),
         Err(e) => internal_error(e),
     }
 }
 
 /// `DELETE /s3/:bucket/:key`
+///
+/// Rejects multipart abort requests (`uploadId`) with `501` *before* touching
+/// storage — routing them here must not delete the real object (R-01).
 pub async fn delete_object<S: S3State>(
     State(state): State<Arc<S>>,
     Path((_bucket, key)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
+    if let Some(rejection) = multipart_rejection(query.as_deref()) {
+        return rejection;
+    }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
-        Err(e) => return s3_xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
+        Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
     };
     match state.storage().delete(&storage_key).await {
         Ok(()) | Err(picroom_storage::StorageError::NotFound(_)) => {
@@ -116,19 +133,11 @@ pub async fn delete_object<S: S3State>(
 /// (the API path already does this; the S3 path must too).
 fn internal_error<E: std::fmt::Display>(e: E) -> Response {
     tracing::error!("s3 object operation failed: {e}");
-    s3_xml_error(
+    xml_error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "InternalError",
         "An internal error occurred",
     )
-}
-
-/// Builds an S3-compatible XML error response.
-fn s3_xml_error(status: StatusCode, code: &str, message: &str) -> Response {
-    let xml = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>{code}</Code><Message>{message}</Message><RequestId>picroom</RequestId></Error>"#
-    );
-    (status, [("content-type", "application/xml")], xml).into_response()
 }
 
 #[cfg(test)]
@@ -136,7 +145,7 @@ mod tests {
     use super::*;
     use crate::test_util::TestState;
     use axum::body::to_bytes;
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, RawQuery, State};
     use axum::http::{HeaderMap, StatusCode};
     use bytes::Bytes;
     use picroom_domain::StorageKey;
@@ -180,6 +189,7 @@ mod tests {
         let resp = put_object(
             State(st.clone()),
             Path(("bucket".into(), key.clone())),
+            RawQuery(None),
             HeaderMap::new(),
             body.clone(),
         )
@@ -224,6 +234,7 @@ mod tests {
         let resp = put_object(
             State(st),
             Path(("bucket".into(), "x.png".into())),
+            RawQuery(None),
             HeaderMap::new(),
             Bytes::from_static(b"x"),
         )
@@ -269,7 +280,12 @@ mod tests {
             .put(&StorageKey::parse(&key).unwrap(), Bytes::from_static(b"d"))
             .await
             .unwrap();
-        let resp = delete_object(State(st.clone()), Path(("bucket".into(), key.clone()))).await;
+        let resp = delete_object(
+            State(st.clone()),
+            Path(("bucket".into(), key.clone())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert!(!st
             .storage()
@@ -281,7 +297,12 @@ mod tests {
     #[tokio::test]
     async fn delete_missing_returns_no_content() {
         let st = state();
-        let resp = delete_object(State(st), Path(("bucket".into(), "ghost.webp".into()))).await;
+        let resp = delete_object(
+            State(st),
+            Path(("bucket".into(), "ghost.webp".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     }
 
@@ -289,7 +310,63 @@ mod tests {
     async fn delete_internal_error_on_storage_failure() {
         let st = state();
         st.set_fail(true);
-        let resp = delete_object(State(st), Path(("bucket".into(), "x.webp".into()))).await;
+        let resp = delete_object(
+            State(st),
+            Path(("bucket".into(), "x.webp".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    // --- R-01: multipart-shaped requests must not fall through to the
+    // whole-object handlers (they used to overwrite/delete real data). ---
+
+    #[tokio::test]
+    async fn put_with_multipart_query_is_501_and_writes_nothing() {
+        let st = state();
+        let key = "img/r01-put.png".to_string();
+        let resp = put_object(
+            State(st.clone()),
+            Path(("bucket".into(), key.clone())),
+            RawQuery(Some("partNumber=1&uploadId=U".into())),
+            HeaderMap::new(),
+            Bytes::from_static(b"fragment"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(
+            !st.storage()
+                .exists(&StorageKey::parse(&key).unwrap())
+                .await
+                .unwrap(),
+            "multipart PUT must not write any bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_with_multipart_query_is_501_and_object_survives() {
+        let st = state();
+        let key = "img/r01-delete.png".to_string();
+        st.storage()
+            .put(
+                &StorageKey::parse(&key).unwrap(),
+                Bytes::from_static(b"precious"),
+            )
+            .await
+            .unwrap();
+        let resp = delete_object(
+            State(st.clone()),
+            Path(("bucket".into(), key.clone())),
+            RawQuery(Some("uploadId=x".into())),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        let resp = get_object(State(st), Path(("bucket".into(), key))).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "object must still be readable"
+        );
+        assert_eq!(body_string(resp).await, "precious");
     }
 }

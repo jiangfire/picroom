@@ -182,21 +182,6 @@ paths:
         '204':
           description: Logged out
 
-  /api/v1/me:
-    get:
-      tags: [users]
-      summary: Current user profile
-      operationId: getMe
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
   /api/v1/teams:
     get:
       tags: [teams]
@@ -247,23 +232,6 @@ paths:
                 $ref: '#/components/schemas/Team'
         '404':
           $ref: '#/components/responses/NotFound'
-    patch:
-      tags: [teams]
-      summary: Update a team
-      operationId: updateTeam
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateTeamRequest'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Team'
 
   /api/v1/teams/{teamId}/members:
     parameters:
@@ -442,6 +410,100 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/images/{imageId}/acl:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+    get:
+      tags: [images]
+      summary: List the image's ACL grants
+      description: >
+        Owner or `Image/Update` (manager/admin) only. Returns the resource's
+        grant set; evaluation order is explicit deny, ownership, team role,
+        ACL allow, global role, default deny (spec §10.3).
+      operationId: listImageAcl
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AclGrant'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [images]
+      summary: Replace the image's full ACL grant set
+      description: Replace semantics — the request body is the complete grant list; idempotent on repeat.
+      operationId: replaceImageAcl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grants]
+              properties:
+                grants:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AclGrant'
+      responses:
+        '200':
+          description: The stored grant set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AclGrant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/images/{imageId}/acl/{subjectType}/{subjectId}:
+    parameters:
+      - $ref: '#/components/parameters/ImageId'
+      - name: subjectType
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [user, team]
+      - name: subjectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [images]
+      summary: Remove every grant for one subject on the image
+      operationId: revokeImageAcl
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /i/{key}:
     parameters:
       - in: path
@@ -476,49 +538,6 @@ paths:
                 format: binary
         '404':
           $ref: '#/components/responses/NotFound'
-
-  /api/v1/images/{imageId}/avif:
-    parameters:
-      - $ref: '#/components/parameters/ImageId'
-    get:
-      tags: [images]
-      summary: Get AVIF variant
-      operationId: getImageAvif
-      responses:
-        '302':
-          description: Redirect to signed storage URL
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/images/{imageId}/webp:
-    parameters:
-      - $ref: '#/components/parameters/ImageId'
-    get:
-      tags: [images]
-      summary: Get WebP variant
-      operationId: getImageWebp
-      responses:
-        '302':
-          description: Redirect to signed storage URL
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/images/{imageId}/thumbnail:
-    parameters:
-      - $ref: '#/components/parameters/ImageId'
-      - in: query
-        name: size
-        schema:
-          type: integer
-          enum: [200, 400, 800]
-          default: 400
-    get:
-      tags: [images]
-      summary: Get thumbnail
-      operationId: getImageThumbnail
-      responses:
-        '302':
-          description: Redirect to signed storage URL
 
   /api/v1/audit:
     get:
@@ -972,16 +991,6 @@ components:
         description:
           type: string
 
-    UpdateTeamRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        storage_policy:
-          type: string
-
     TeamMember:
       type: object
       required: [user, role, joined_at]
@@ -1066,8 +1075,11 @@ components:
         name:
           type: string
         driver:
+          # In v1 only `local` and `s3` are implemented. `s3` is the value
+          # used for AWS S3, MinIO, and any S3-compatible endpoint. Other
+          # values are reserved for post-v1 drivers (ADR-0003).
           type: string
-          enum: [local, s3, oss, cos, qiniu, minio]
+          enum: [local, s3]
         config:
           type: object
           additionalProperties: true
@@ -1082,8 +1094,9 @@ components:
         name:
           type: string
         driver:
+          # See StoragePolicy.driver above.
           type: string
-          enum: [local, s3, oss, cos, qiniu, minio]
+          enum: [local, s3]
         config:
           type: object
           additionalProperties: true

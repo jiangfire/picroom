@@ -186,9 +186,7 @@ pub async fn build_storage(_cfg: &picroom_infra::Config) -> Result<Arc<dyn Stora
             region = %s3_cfg.region,
             "storage: S3/MinIO",
         );
-        let driver = S3Driver::new(s3_cfg)
-            .await
-            .map_err(|e| anyhow::anyhow!("S3 driver init: {e}"))?;
+        let driver = S3Driver::new(s3_cfg).map_err(|e| anyhow::anyhow!("S3 driver init: {e}"))?;
         return Ok(Arc::new(driver) as Arc<dyn Storage>);
     }
 

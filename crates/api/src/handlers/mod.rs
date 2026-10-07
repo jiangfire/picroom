@@ -3,6 +3,7 @@
 
 //! HTTP handlers.
 
+pub mod acl;
 pub mod admin;
 pub mod auth;
 pub mod images;

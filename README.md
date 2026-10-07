@@ -91,7 +91,9 @@ abstractions are:
 
 - **`domain`**: pure entities, value objects, traits, errors. No I/O.
 - **`storage`**: `Storage` trait (split by capability) + drivers for
-  Local, S3, OSS, COS, Qiniu, MinIO.
+  Local and S3 (with a `MinioDriver` type alias + `minio()` constructor for
+  MinIO endpoints). OSS / COS / Qiniu drivers are planned (ADR-0003) but not
+  implemented in v1.
 - **`imaging`**: `Processor` trait + AVIF/WebP/resize/thumbnail/watermark.
 - **`auth`**: JWT + OIDC + API tokens + RBAC.
 - **`service`**: use cases (upload, query, delete, quota).
@@ -103,6 +105,12 @@ abstractions are:
 See [`docs/spec.md`](docs/spec.md) for the full design and [`docs/adr/`](docs/adr/)
 for architectural decision records. The desktop client has its own spec at
 [`docs/spec-admin-client.md`](docs/spec-admin-client.md).
+
+A v1.0 completeness and correctness review — with 33 tracked findings, a
+phased remediation plan, and an executable task list — lives in
+[`docs/review-v1.0.md`](docs/review-v1.0.md),
+[`docs/plan-remediation-v1.md`](docs/plan-remediation-v1.md), and
+[`docs/tasks-remediation-v1.md`](docs/tasks-remediation-v1.md).
 
 ## Desktop admin client
 
@@ -131,8 +139,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Run coverage
 cargo tarpaulin --workspace
 
-# Run E2E (requires Docker)
-RUN_E2E=1 cargo test --test e2e --features e2e
+# E2E suite is a tracked follow-up — not yet wired; do not gate on
+# `--features e2e` until tests/ has actual test files. See spec.md §6.3.
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow.

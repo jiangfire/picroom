@@ -1032,6 +1032,33 @@ impl TeamRepository for InMemoryTeamRepo {
             .cloned()
             .collect())
     }
+
+    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError> {
+        let member_team_ids: Vec<TeamId> = self
+            .members
+            .iter()
+            .filter(|m| m.user_id == user_id)
+            .map(|m| m.team_id)
+            .collect();
+        Ok(self
+            .teams
+            .iter()
+            .filter(|t| member_team_ids.contains(&t.id))
+            .cloned()
+            .collect())
+    }
+
+    async fn member_role(
+        &self,
+        team_id: TeamId,
+        user_id: UserId,
+    ) -> Result<Option<String>, ServiceError> {
+        Ok(self
+            .members
+            .iter()
+            .find(|m| m.team_id == team_id && m.user_id == user_id)
+            .map(|m| m.role.clone()))
+    }
 }
 
 fn teams_app(teams: Vec<Team>, members: Vec<TeamMember>) -> axum::Router {
@@ -1428,4 +1455,103 @@ async fn upload_with_team_id_associates_team() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["team_id"], team_id.to_string());
+}
+
+/// R-06: `server.max_body_mb` must actually bound bodies. The HTTP layer
+/// (api_cmd) stacks `DefaultBodyLimit::max(max_body_mb * 1MB)` on the router —
+/// the mechanism axum's `Bytes`/`Multipart` extractors consult. Before this
+/// fix only `RequestBodyLimitLayer` was installed, which the extractors
+/// ignore, so every upload was capped at axum's 2 MiB extractor default.
+#[tokio::test]
+async fn body_limit_rejects_oversized_and_accepts_configured_size() {
+    use axum::extract::DefaultBodyLimit;
+    use axum::http::header::CONTENT_TYPE;
+
+    // Incompressible-ish 1200x1200 PNG (~4.3 MB), comfortably above the 2 MiB
+    // extractor default but below the configured limit.
+    let img = image::RgbImage::from_fn(1200, 1200, |x, y| {
+        let v = ((x as u64)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add((y as u64).wrapping_mul(1442695040888963407))
+            >> 33) as u8;
+        image::Rgb([v, v.wrapping_add(1), 64])
+    });
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    assert!(
+        png.len() > 3 * 1024 * 1024,
+        "test PNG must be big, got {}",
+        png.len()
+    );
+
+    let boundary = "----picroom-test-boundary";
+    let body_for = |png: &[u8]| -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"big.png\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+        body.extend_from_slice(png);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        body
+    };
+
+    // Under the 2 MiB default this exact upload used to fail with 413; with
+    // the configured limit applied it must succeed (S11).
+    let auth = bearer_token();
+    let response = build_app()
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/images")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header("authorization", auth)
+                .body(Body::from(body_for(&png)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let dbg_body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a ~4 MB upload must be accepted once the configured body limit is applied; body: {}",
+        String::from_utf8_lossy(&dbg_body)
+    );
+
+    // A tight limit must actually reject it. Mirrors api_cmd's layering:
+    // `DefaultBodyLimit` bounds what extractors read, and the transport-level
+    // `RequestBodyLimitLayer` answers oversized bodies with 413.
+    let auth = bearer_token();
+    let response = build_app()
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024))
+        .layer(DefaultBodyLimit::max(64 * 1024))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/images")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header("authorization", auth)
+                .body(Body::from(body_for(&png)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "bodies over the configured limit must be rejected with 413"
+    );
 }

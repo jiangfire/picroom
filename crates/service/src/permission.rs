@@ -29,7 +29,7 @@ impl PermissionService {
     ) -> Result<(), ServiceError> {
         let decision = self
             .engine
-            .check(roles, picroom_auth::Permission::new(resource, action));
+            .check_roles(roles, picroom_auth::Permission::new(resource, action));
         match decision {
             Decision::Allow => Ok(()),
             Decision::Deny => Err(ServiceError::PermissionDenied),

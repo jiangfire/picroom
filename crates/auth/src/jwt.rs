@@ -29,6 +29,10 @@ pub struct JwtClaims {
     /// Optional nonce (OIDC id-token binding / anti-replay).
     #[serde(default)]
     pub nonce: Option<String>,
+    /// Optional session id (D-6). When present, the token is only valid while
+    /// the session row exists and is unrevoked.
+    #[serde(default)]
+    pub sid: Option<String>,
 }
 
 /// JWT errors.
@@ -88,6 +92,20 @@ impl JwtService {
         subject: impl Into<String>,
         scopes: &[String],
     ) -> Result<String, JwtError> {
+        self.issue_session(subject, scopes, None)
+    }
+
+    /// Issues a JWT carrying the given `scopes` and an optional session id.
+    ///
+    /// Login goes through [`Self::issue_with_scopes`]; the session-bearing
+    /// variant exists so the auth layer can bind a token to a revocable
+    /// `sessions` row (D-6).
+    pub fn issue_session(
+        &self,
+        subject: impl Into<String>,
+        scopes: &[String],
+        sid: Option<String>,
+    ) -> Result<String, JwtError> {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let claims = JwtClaims {
             sub: subject.into(),
@@ -97,6 +115,7 @@ impl JwtService {
             exp: now + self.ttl_seconds,
             scopes: scopes.to_vec(),
             nonce: None,
+            sid,
         };
         encode(
             &Header::default(),
@@ -148,6 +167,7 @@ impl JwtService {
             exp: now + 600,
             scopes: vec![],
             nonce: Some(nonce.to_string()),
+            sid: None,
         };
         encode(
             &Header::default(),
