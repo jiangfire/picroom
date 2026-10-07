@@ -38,13 +38,30 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
     let quota = match &deps.db {
         Some(DatabaseHandle::Pg(pool)) => picroom_service::QuotaService::with_pool(pool.clone())
             .with_default_quota(cfg.quota.default_user_bytes),
-        _ => picroom_service::QuotaService::new(),
+        // Q-6: the SQLite dev path enforces quotas too — it must not
+        // silently lose enforcement.
+        Some(DatabaseHandle::Sqlite(pool)) => {
+            picroom_service::QuotaService::with_sqlite_pool(pool.clone())
+                .with_default_quota(cfg.quota.default_user_bytes)
+        }
+        None => picroom_service::QuotaService::new(),
     };
 
-    // Construct UploadService with real audit + quota.
+    // Construct UploadService with real audit + quota, honoring the
+    // `[pipeline]` toggles: encode_avif/encode_webp gate which variant jobs
+    // are enqueued, generate_thumbnail=false disables thumbnails (R-10).
     let mut upload =
         picroom_service::UploadService::new(storage_writer.clone(), deps.audit.clone())
             .with_quota(quota);
+    if !cfg.pipeline.encode_avif {
+        upload = upload.without_avif();
+    }
+    if !cfg.pipeline.encode_webp {
+        upload = upload.without_webp();
+    }
+    if !cfg.pipeline.generate_thumbnail {
+        upload = upload.with_thumbnails(Vec::new());
+    }
 
     // Optionally wire job queue.
     if let Some(db) = &deps.db {

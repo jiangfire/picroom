@@ -180,12 +180,22 @@ impl UploadService {
             .into());
         }
 
-        // 1.5 Quota check — reject before we touch storage so we never persist
-        // bytes we would have to roll back. `remaining_user` returns the
-        // user's cap minus already-stored bytes (or `u64::MAX` when unbacked).
+        // 1.5 Quota checks — reject before we touch storage so we never
+        // persist bytes we would have to roll back. A personal upload is
+        // bounded by the user's cap; a team upload additionally by the
+        // team's cap, so every member hits the same ceiling (R-21).
         let remaining = self.quota.remaining_user(owner_id.as_uuid()).await?;
         if (bytes.len() as u64) > remaining {
             return Err(ServiceError::QuotaExceeded(bytes.len() as u64, remaining));
+        }
+        if let Some(team_id) = team_id {
+            let team_remaining = self.quota.remaining_team(team_id.as_uuid()).await?;
+            if (bytes.len() as u64) > team_remaining {
+                return Err(ServiceError::QuotaExceeded(
+                    bytes.len() as u64,
+                    team_remaining,
+                ));
+            }
         }
 
         // 2. MIME check

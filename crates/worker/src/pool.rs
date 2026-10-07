@@ -52,7 +52,16 @@ impl<Q: JobQueue + 'static, D: DlqSink + 'static> WorkerPool<Q, D> {
                     }
                     match queue.dequeue().await {
                         Ok(Some(job)) => {
-                            let r = handler(job.clone()).await;
+                            // A panicking handler must kill the *job*, not
+                            // the slot: catch the unwind and route it through
+                            // the normal failure path (retry/DLQ). Without
+                            // this, one bad job permanently kills the slot
+                            // and `run_until` spins on an empty JoinSet.
+                            let r = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+                                handler(job.clone()),
+                            ))
+                            .await
+                            .unwrap_or_else(|panic| Err(format!("handler panicked: {panic:?}")));
                             match r {
                                 Ok(result) => {
                                     if let Err(e) = queue.complete(job.id, &result).await {
@@ -145,8 +154,15 @@ pub async fn run_until<F, Fut, Q, D>(
     let mut set = tokio::task::JoinSet::new();
     pool.run_into(&flag_for_wait, handler, &mut set);
 
-    // Drain tasks as they finish until the stop flag is set.
+    // Drain tasks as they finish until the stop flag is set. `join_next`
+    // returns `None` immediately when the set is empty (all slots dead) —
+    // park briefly instead of busy-spinning, and let the loop re-check the
+    // flag so shutdown stays responsive.
     while !flag.load(Ordering::Relaxed) {
+        if set.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            continue;
+        }
         tokio::select! {
             _ = set.join_next() => {}
         }
@@ -202,6 +218,63 @@ mod tests {
         async fn fail(&self, _id: Uuid, _error: &str) -> Result<(), JobError> {
             Ok(())
         }
+    }
+
+    /// R-11: a panicking handler must be recorded as a job failure (DLQ via
+    /// the retry path) and must NOT kill the worker slot — the next job is
+    /// still processed.
+    #[tokio::test]
+    async fn panicking_handler_fails_job_and_slot_survives() {
+        let queue = Arc::new(FakeQueue {
+            attempts: AtomicU32::new(0),
+            done: AtomicBool::new(false),
+            times: Arc::new(Mutex::new(Vec::new())),
+        });
+        let dlq = Arc::new(InMemoryDlq::new());
+        let policy = RetryPolicy {
+            max_attempts: 1,
+            initial_delay_secs: 1,
+            max_delay_secs: 60,
+            strategy: RetryStrategy::Exponential,
+        };
+        let pool = WorkerPool::new(queue.clone(), dlq.clone(), policy, 1);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicU32::new(0));
+        let handler = {
+            let stop = stop.clone();
+            let calls = calls.clone();
+            move |_job: Job| {
+                let stop = stop.clone();
+                let calls = calls.clone();
+                async move {
+                    let n = calls.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        panic!("boom: first job panics");
+                    }
+                    // Second job must still be processed by the same slot.
+                    stop.store(true, Ordering::SeqCst);
+                    Ok::<JobResult, String>(JobResult::Skipped)
+                }
+            }
+        };
+
+        let mut set = tokio::task::JoinSet::new();
+        pool.run_into(&stop, handler, &mut set);
+        while set.join_next().await.is_some() {}
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "the slot must survive the panic and process the next job"
+        );
+        let entries = dlq.entries();
+        assert_eq!(entries.len(), 1, "the panicked job lands in the DLQ");
+        assert!(
+            entries[0].error.contains("panicked"),
+            "DLQ error must record the panic, got: {}",
+            entries[0].error
+        );
     }
 
     /// Proves the worker sleeps for the retry-policy delay between a failed

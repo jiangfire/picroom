@@ -108,19 +108,76 @@ pub struct StorageConfig {
     pub default: Option<String>,
 }
 
+/// Encoder quality settings.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct QualityConfig {
+    /// AVIF quality, 0–100 (ravif scale; higher is better). Applied to the
+    /// worker's AVIF encoder.
+    #[serde(default = "default_avif_quality")]
+    pub avif: f32,
+    /// WebP "quality". **Reserved, currently without effect**: the `image`
+    /// crate's WebP encoder is lossless-only, so every WebP variant is
+    /// lossless regardless of this value. Kept (and range-validated) so the
+    /// documented config surface does not silently reject the spec'd key.
+    #[serde(default = "default_webp_quality")]
+    pub webp: f32,
+    /// JPEG quality for generated thumbnails, 1–100.
+    #[serde(default = "default_jpeg_quality")]
+    pub jpeg: u8,
+}
+
+const fn default_avif_quality() -> f32 {
+    60.0
+}
+const fn default_webp_quality() -> f32 {
+    80.0
+}
+const fn default_jpeg_quality() -> u8 {
+    85
+}
+
+impl Default for QualityConfig {
+    fn default() -> Self {
+        Self {
+            avif: default_avif_quality(),
+            webp: default_webp_quality(),
+            jpeg: default_jpeg_quality(),
+        }
+    }
+}
+
 /// Image-pipeline config.
+///
+/// Note on `strip_exif`: generated variants (AVIF/WebP/thumbnails) are
+/// re-encoded from decoded pixels and never carry EXIF metadata — GPS and
+/// camera tags are gone from every variant. **Originals are stored
+/// byte-exact**; stripping EXIF from uploaded originals is not implemented,
+/// and enabling this key does not change that.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     /// Encode AVIF.
+    #[serde(default = "default_true")]
     pub encode_avif: bool,
     /// Encode WebP.
+    #[serde(default = "default_true")]
     pub encode_webp: bool,
     /// Generate thumbnails.
+    #[serde(default = "default_true")]
     pub generate_thumbnail: bool,
-    /// Strip EXIF.
+    /// Strip EXIF (see the struct doc: applies to generated variants only).
+    #[serde(default = "default_true")]
     pub strip_exif: bool,
-    /// Max dimension.
+    /// Max dimension: variants are downscaled (aspect-preserving) so their
+    /// longest side never exceeds this.
+    #[serde(default = "default_max_dimension")]
     pub max_dimension: u32,
+    /// Encoder quality settings.
+    #[serde(default)]
+    pub quality: QualityConfig,
+}
+
+const fn default_max_dimension() -> u32 {
+    8192
 }
 
 impl Default for PipelineConfig {
@@ -130,7 +187,8 @@ impl Default for PipelineConfig {
             encode_webp: true,
             generate_thumbnail: true,
             strip_exif: true,
-            max_dimension: 8192,
+            max_dimension: default_max_dimension(),
+            quality: QualityConfig::default(),
         }
     }
 }

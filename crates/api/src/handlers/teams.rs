@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use picroom_audit::{AuditAction, AuditEvent};
 use picroom_auth::{PermissionAction, ResourceType};
-use picroom_domain::{Team, TeamId, UserId};
+use picroom_domain::{PageReq, Team, TeamId, UserId};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -129,14 +129,20 @@ pub async fn list(
         .permissions
         .check(&auth.roles, ResourceType::Team, PermissionAction::Read)
         .is_ok();
+    // R-25: bounded queries — clamp the page like /images.
+    let page = PageReq {
+        limit: 100,
+        cursor: None,
+    };
     let teams = if can_read_all {
-        repo.list().await.map_err(ApiError::from)?
+        repo.list(page).await.map_err(ApiError::from)?
     } else {
-        repo.list_for_user(auth.user_id)
+        repo.list_for_user(auth.user_id, page)
             .await
             .map_err(ApiError::from)?
     };
     let items: Vec<serde_json::Value> = teams
+        .items
         .iter()
         .map(|t| {
             json!({
@@ -149,7 +155,11 @@ pub async fn list(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(json!({
+        "items": items,
+        "has_more": teams.has_more,
+        "next_cursor": teams.next_cursor,
+    })))
 }
 
 /// `POST /api/v1/teams/:id/members` — add (or update) a member.
@@ -212,10 +222,17 @@ pub async fn list_members(
         return Err(ApiError::not_found("team not found"));
     }
     let members = repo
-        .list_members(TeamId(id))
+        .list_members(
+            TeamId(id),
+            PageReq {
+                limit: 500,
+                cursor: None,
+            },
+        )
         .await
         .map_err(ApiError::from)?;
     let items: Vec<serde_json::Value> = members
+        .items
         .iter()
         .map(|m| {
             json!({
@@ -225,7 +242,11 @@ pub async fn list_members(
             })
         })
         .collect();
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(json!({
+        "items": items,
+        "has_more": members.has_more,
+        "next_cursor": members.next_cursor,
+    })))
 }
 
 /// Records a team-related audit event (best-effort; failures are logged, not fatal).

@@ -264,14 +264,26 @@ mod tests {
         ) -> Result<picroom_domain::Team, ServiceError> {
             Err(ServiceError::Internal("unused".into()))
         }
-        async fn list(&self) -> Result<Vec<picroom_domain::Team>, ServiceError> {
-            Ok(vec![])
+        async fn list(
+            &self,
+            _page: picroom_domain::PageReq,
+        ) -> Result<picroom_domain::Page<picroom_domain::Team>, ServiceError> {
+            Ok(picroom_domain::Page::new(
+                vec![],
+                None,
+                picroom_domain::PageReq::default(),
+            ))
         }
         async fn list_for_user(
             &self,
             _user_id: picroom_domain::UserId,
-        ) -> Result<Vec<picroom_domain::Team>, ServiceError> {
-            Ok(vec![])
+            _page: picroom_domain::PageReq,
+        ) -> Result<picroom_domain::Page<picroom_domain::Team>, ServiceError> {
+            Ok(picroom_domain::Page::new(
+                vec![],
+                None,
+                picroom_domain::PageReq::default(),
+            ))
         }
         async fn add_member(
             &self,
@@ -284,8 +296,13 @@ mod tests {
         async fn list_members(
             &self,
             _team_id: picroom_domain::TeamId,
-        ) -> Result<Vec<picroom_domain::TeamMember>, ServiceError> {
-            Ok(vec![])
+            _page: picroom_domain::PageReq,
+        ) -> Result<picroom_domain::Page<picroom_domain::TeamMember>, ServiceError> {
+            Ok(picroom_domain::Page::new(
+                vec![],
+                None,
+                picroom_domain::PageReq::default(),
+            ))
         }
         async fn member_role(
             &self,

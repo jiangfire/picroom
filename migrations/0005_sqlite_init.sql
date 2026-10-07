@@ -75,8 +75,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_error      TEXT,
     enqueued_at     TEXT NOT NULL,
     started_at      TEXT,
-    finished_at     TEXT
-);
+    finished_at     TEXT,
+    lease_expires_at TEXT,
+    claimed_by       TEXT
+    );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_pending ON jobs(enqueued_at)
     WHERE status = 'pending';

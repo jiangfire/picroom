@@ -561,7 +561,7 @@ impl picroom_worker::processor::VariantRepository for PgVariantRepository {
             r"
             INSERT INTO image_variants (id, image_id, kind, size, storage_key, bytes, content_type, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-            ON CONFLICT (image_id, kind, size) DO UPDATE
+            ON CONFLICT (image_id, kind, COALESCE(size, -1)) DO UPDATE
               SET storage_key = EXCLUDED.storage_key,
                   bytes = EXCLUDED.bytes,
                   content_type = EXCLUDED.content_type
@@ -592,10 +592,15 @@ pub trait TeamRepository: Send + Sync {
     async fn create(&self, team: &Team) -> Result<(), ServiceError>;
     /// Fetches a team by id.
     async fn get(&self, id: TeamId) -> Result<Team, ServiceError>;
-    /// Lists all teams (newest first).
-    async fn list(&self) -> Result<Vec<Team>, ServiceError>;
-    /// Lists the teams the user is a member of (newest first).
-    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError>;
+    /// Lists teams (newest first), paginated (R-25: the query used to be
+    /// unbounded).
+    async fn list(&self, page: PageReq) -> Result<Page<Team>, ServiceError>;
+    /// Lists the teams the user is a member of (newest first), paginated.
+    async fn list_for_user(
+        &self,
+        user_id: UserId,
+        page: PageReq,
+    ) -> Result<Page<Team>, ServiceError>;
     /// Adds or updates a team membership.
     async fn add_member(
         &self,
@@ -603,8 +608,12 @@ pub trait TeamRepository: Send + Sync {
         user_id: UserId,
         role: &str,
     ) -> Result<(), ServiceError>;
-    /// Lists the members of a team (oldest join first).
-    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError>;
+    /// Lists the members of a team (oldest join first), paginated.
+    async fn list_members(
+        &self,
+        team_id: TeamId,
+        page: PageReq,
+    ) -> Result<Page<TeamMember>, ServiceError>;
     /// Returns the actor's role within a team, or `None` when not a member.
     async fn member_role(
         &self,
@@ -675,53 +684,87 @@ impl TeamRepository for PgTeamRepository {
         }
     }
 
-    async fn list(&self) -> Result<Vec<Team>, ServiceError> {
+    async fn list(&self, page: PageReq) -> Result<Page<Team>, ServiceError> {
+        let limit = usize::try_from(page.limit).unwrap_or(50).clamp(1, 500);
+        let cursor = parse_composite_cursor(page.cursor.as_deref())?;
         let rows: Vec<TeamRow> = sqlx::query_as::<_, TeamRow>(
-            r"SELECT id, name, slug, description, storage_policy, created_at FROM teams ORDER BY created_at DESC",
+            r"SELECT id, name, slug, description, storage_policy, created_at
+              FROM teams
+              WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2))
+              ORDER BY created_at DESC, id DESC
+              LIMIT $3",
         )
+        .bind(cursor.0)
+        .bind(cursor.1)
+        .bind(limit as i64 + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("list teams: {e}")))?;
-        Ok(rows
-            .into_iter()
+        let has_more = rows.len() > limit;
+        let rows: Vec<TeamRow> = rows.into_iter().take(limit).collect();
+        let next_cursor = match (has_more, rows.last()) {
+            (true, Some(last)) => Some(format_cursor(last.5, last.0)?),
+            _ => None,
+        };
+        let items: Vec<Team> = rows
+            .iter()
             .map(
                 |(id, name, slug, description, storage_policy, created_at)| Team {
-                    id: TeamId(id),
-                    name,
-                    slug,
-                    description,
-                    storage_policy,
-                    created_at,
+                    id: TeamId(*id),
+                    name: name.clone(),
+                    slug: slug.clone(),
+                    description: description.clone(),
+                    storage_policy: storage_policy.clone(),
+                    created_at: *created_at,
                 },
             )
-            .collect())
+            .collect();
+        Ok(Page::new(items, next_cursor, page))
     }
 
-    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError> {
+    async fn list_for_user(
+        &self,
+        user_id: UserId,
+        page: PageReq,
+    ) -> Result<Page<Team>, ServiceError> {
+        let limit = usize::try_from(page.limit).unwrap_or(50).clamp(1, 500);
+        let cursor = parse_composite_cursor(page.cursor.as_deref())?;
         let rows: Vec<TeamRow> = sqlx::query_as::<_, TeamRow>(
             r"SELECT t.id, t.name, t.slug, t.description, t.storage_policy, t.created_at
               FROM teams t
               JOIN team_members m ON m.team_id = t.id
               WHERE m.user_id = $1
-              ORDER BY t.created_at DESC",
+                AND ($2::timestamptz IS NULL OR (t.created_at, t.id) < ($2, $3))
+              ORDER BY t.created_at DESC, t.id DESC
+              LIMIT $4",
         )
         .bind(user_id.as_uuid())
+        .bind(cursor.0)
+        .bind(cursor.1)
+        .bind(limit as i64 + 1)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("list teams for user: {e}")))?;
-        Ok(rows
-            .into_iter()
+        let has_more = rows.len() > limit;
+        let rows: Vec<TeamRow> = rows.into_iter().take(limit).collect();
+        let next_cursor = match (has_more, rows.last()) {
+            (true, Some(last)) => Some(format_cursor(last.5, last.0)?),
+            _ => None,
+        };
+        let items: Vec<Team> = rows
+            .iter()
             .map(
                 |(id, name, slug, description, storage_policy, created_at)| Team {
-                    id: TeamId(id),
-                    name,
-                    slug,
-                    description,
-                    storage_policy,
-                    created_at,
+                    id: TeamId(*id),
+                    name: name.clone(),
+                    slug: slug.clone(),
+                    description: description.clone(),
+                    storage_policy: storage_policy.clone(),
+                    created_at: *created_at,
                 },
             )
-            .collect())
+            .collect();
+        Ok(Page::new(items, next_cursor, page))
     }
 
     async fn add_member(
@@ -744,24 +787,47 @@ impl TeamRepository for PgTeamRepository {
         Ok(())
     }
 
-    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError> {
+    async fn list_members(
+        &self,
+        team_id: TeamId,
+        page: PageReq,
+    ) -> Result<Page<TeamMember>, ServiceError> {
+        // joined_at is not unique; page by offset within a clamped limit —
+        // rosters are small, and the point is the hard ceiling (R-25).
+        let limit = usize::try_from(page.limit).unwrap_or(50).clamp(1, 500);
+        let offset: i64 = page
+            .cursor
+            .as_deref()
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
         let rows: Vec<(Uuid, Uuid, String, OffsetDateTime)> = sqlx::query_as(
             r"SELECT team_id, user_id, role, joined_at FROM team_members
-              WHERE team_id = $1 ORDER BY joined_at ASC",
+              WHERE team_id = $1 ORDER BY joined_at ASC
+              LIMIT $2 OFFSET $3",
         )
         .bind(team_id.as_uuid())
+        .bind(limit as i64 + 1)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ServiceError::Internal(format!("list members: {e}")))?;
-        Ok(rows
+        let has_more = rows.len() > limit;
+        let items: Vec<TeamMember> = rows
             .into_iter()
+            .take(limit)
             .map(|(tid, uid, role, joined_at)| TeamMember {
                 team_id: TeamId(tid),
                 user_id: UserId(uid),
                 role,
                 joined_at,
             })
-            .collect())
+            .collect();
+        let next_cursor = if has_more {
+            Some((offset + limit as i64).to_string())
+        } else {
+            None
+        };
+        Ok(Page::new(items, next_cursor, page))
     }
 
     async fn member_role(

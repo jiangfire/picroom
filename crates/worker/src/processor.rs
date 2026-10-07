@@ -27,6 +27,30 @@ pub trait VariantRepository: Send + Sync {
     ) -> Result<(), String>;
 }
 
+/// Encoder settings applied by the processor, mirrored from
+/// `[pipeline]` in the config (R-10: this block used to be parsed and
+/// ignored; the encoder now honors it).
+#[derive(Debug, Clone, Copy)]
+pub struct PipelineSettings {
+    /// AVIF quality 0–100 (`[pipeline].quality.avif`).
+    pub avif_quality: f32,
+    /// Thumbnail JPEG quality 1–100 (`[pipeline].quality.jpeg`).
+    pub jpeg_quality: u8,
+    /// Variants are downscaled (aspect-preserving) so their longest side
+    /// never exceeds this (`[pipeline].max_dimension`).
+    pub max_dimension: u32,
+}
+
+impl Default for PipelineSettings {
+    fn default() -> Self {
+        Self {
+            avif_quality: 60.0,
+            jpeg_quality: 85,
+            max_dimension: 8192,
+        }
+    }
+}
+
 /// Dependencies required by the image job processor.
 pub struct ProcessorDeps {
     /// Image repository (`get` only — read metadata + storage key).
@@ -37,6 +61,8 @@ pub struct ProcessorDeps {
     pub dlq: Option<Arc<dyn DlqSink>>,
     /// Optional variant repository (writes `image_variants` table).
     pub variant_repo: Option<Arc<dyn VariantRepository + Send + Sync>>,
+    /// Encoder settings from `[pipeline]` config.
+    pub pipeline: PipelineSettings,
 }
 
 /// Minimal lookup the processor needs (avoids coupling to `picroom-service`).
@@ -57,16 +83,20 @@ impl ImageProcessor {
 
     /// Processes a single job, producing a `JobResult`.
     pub async fn process(deps: &ProcessorDeps, job: Job) -> Result<JobResult, String> {
+        let settings = deps.pipeline;
         match &job.kind {
             JobKind::EncodeAvif => {
-                encode_variant(deps, &job, "avif", None, "avif", Box::new(avif_encode)).await
+                let quality = settings.avif_quality;
+                let enc: Encoder = Box::new(move |img| avif_encode(img, quality));
+                encode_variant(deps, &job, "avif", None, "avif", enc).await
             }
             JobKind::EncodeWebp => {
                 encode_variant(deps, &job, "webp", None, "webp", Box::new(webp_encode)).await
             }
             JobKind::GenerateThumbnail { size } => {
                 let size = *size;
-                let enc: Encoder = Box::new(move |img| thumbnail_encode(img, size));
+                let quality = settings.jpeg_quality;
+                let enc: Encoder = Box::new(move |img| thumbnail_encode(img, size, quality));
                 // DB identity is `kind='thumbnail', size=<n>` (the CHECK
                 // constraint on `image_variants.kind` admits `thumbnail` only);
                 // the storage key keeps the size suffix so thumbnails of
@@ -109,9 +139,11 @@ async fn encode_variant(
         .await
         .map_err(|e| format!("storage get: {e}"))?;
 
-    // Decode for re-encode.
+    // Decode for re-encode, then bound the size by `[pipeline].max_dimension`
+    // (aspect-preserving) so a 12000 px upload no longer encodes at full size.
     let decoded =
         image::load_from_memory(&original).map_err(|e| format!("decode original: {e}"))?;
+    let decoded = bounded(decoded, deps.pipeline.max_dimension);
 
     let bytes = tokio::task::spawn_blocking(move || encoder(&decoded))
         .await
@@ -161,7 +193,21 @@ fn variant_key(image: &Image, name: &str) -> Result<StorageKey, String> {
     StorageKey::parse(&key).map_err(|e| format!("invalid variant key \"{key}\": {e}"))
 }
 
-fn avif_encode(img: &image::DynamicImage) -> Result<Bytes, String> {
+/// Downscales `img` (aspect-preserving) so its longest side is at most
+/// `max_dimension`; smaller images pass through untouched.
+fn bounded(img: image::DynamicImage, max_dimension: u32) -> image::DynamicImage {
+    let longest = img.width().max(img.height());
+    if max_dimension == 0 || longest <= max_dimension {
+        return img;
+    }
+    img.resize(
+        max_dimension,
+        max_dimension,
+        image::imageops::FilterType::Triangle,
+    )
+}
+
+fn avif_encode(img: &image::DynamicImage, quality: f32) -> Result<Bytes, String> {
     use ravif::{Img, RGB8};
     let w = img.width() as usize;
     let h = img.height() as usize;
@@ -178,7 +224,7 @@ fn avif_encode(img: &image::DynamicImage) -> Result<Bytes, String> {
         })
         .collect();
     let enc = ravif::Encoder::new()
-        .with_quality(60.0)
+        .with_quality(quality.clamp(0.0, 100.0))
         .with_speed(6)
         .encode_rgb(Img::new(pixels.as_slice(), w, h))
         .map_err(|e| format!("ravif encode: {e:?}"))?;
@@ -194,13 +240,27 @@ fn webp_encode(img: &image::DynamicImage) -> Result<Bytes, String> {
     Ok(Bytes::from(out))
 }
 
-fn thumbnail_encode(img: &image::DynamicImage, size: u32) -> Result<Bytes, String> {
-    let resized = img.resize(size, size, image::imageops::FilterType::Triangle);
+fn thumbnail_encode(
+    img: &image::DynamicImage,
+    size: u32,
+    jpeg_quality: u8,
+) -> Result<Bytes, String> {
+    // Shrink-only: never upscale a source that is already smaller than the
+    // requested thumbnail size (e.g. when max_dimension bounded it first).
+    let resized = {
+        let longest = img.width().max(img.height());
+        if longest <= size {
+            img.clone()
+        } else {
+            img.resize(size, size, image::imageops::FilterType::Triangle)
+        }
+    };
     let mut out = Vec::new();
-    let mut cur = std::io::Cursor::new(&mut out);
+    let encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, jpeg_quality.clamp(1, 100));
     resized
         .to_rgb8()
-        .write_to(&mut cur, image::ImageFormat::Jpeg)
+        .write_with_encoder(encoder)
         .map_err(|e| e.to_string())?;
     Ok(Bytes::from(out))
 }
@@ -326,6 +386,7 @@ mod tests {
             storage,
             dlq: Some(Arc::new(InMemoryDlq::new())),
             variant_repo: Some(repo),
+            pipeline: PipelineSettings::default(),
         }
     }
 
@@ -379,5 +440,98 @@ mod tests {
             result.is_err(),
             "insert failure must surface as a job error"
         );
+    }
+
+    /// R-10: `quality.avif` must change the encoder output — a low quality
+    /// setting produces different (smaller) bytes than the default.
+    #[tokio::test]
+    async fn avif_quality_changes_output_bytes() {
+        async fn encode_with(quality: f32) -> Bytes {
+            let (img, storage) = test_image(png_bytes());
+            let repo = Arc::<RecordingRepo>::default();
+            let deps = ProcessorDeps {
+                image_lookup: {
+                    struct L(Image);
+                    #[async_trait]
+                    impl ImageLookup for L {
+                        async fn lookup(&self, _id: ImageId) -> Result<Image, String> {
+                            Ok(self.0.clone())
+                        }
+                    }
+                    Arc::new(L(img.clone()))
+                },
+                storage,
+                dlq: None,
+                variant_repo: Some(repo),
+                pipeline: PipelineSettings {
+                    avif_quality: quality,
+                    ..Default::default()
+                },
+            };
+            let job = Job {
+                id: uuid::Uuid::now_v7(),
+                image_id: img.id,
+                kind: JobKind::EncodeAvif,
+                attempts: 0,
+                enqueued_at: OffsetDateTime::now_utc(),
+            };
+            match ImageProcessor::process(&deps, job).await.unwrap() {
+                JobResult::Variant { bytes, .. } => Bytes::from(bytes.unwrap()),
+                JobResult::Skipped => panic!("expected variant"),
+            }
+        }
+        let low = encode_with(10.0).await;
+        let high = encode_with(95.0).await;
+        assert_ne!(low, high, "quality must affect the AVIF output");
+        assert!(
+            low.len() < high.len(),
+            "lower quality should encode smaller: {} vs {}",
+            low.len(),
+            high.len()
+        );
+    }
+
+    /// R-10: `max_dimension` bounds a large upload before encoding.
+    #[tokio::test]
+    async fn max_dimension_bounds_encoded_variants() {
+        let (img, storage) = test_image(png_bytes());
+        let deps = ProcessorDeps {
+            image_lookup: {
+                struct L(Image);
+                #[async_trait]
+                impl ImageLookup for L {
+                    async fn lookup(&self, _id: ImageId) -> Result<Image, String> {
+                        Ok(self.0.clone())
+                    }
+                }
+                Arc::new(L(img.clone()))
+            },
+            storage,
+            dlq: None,
+            variant_repo: None,
+            pipeline: PipelineSettings {
+                max_dimension: 24,
+                ..Default::default()
+            },
+        };
+        let job = Job {
+            id: uuid::Uuid::now_v7(),
+            image_id: img.id,
+            kind: JobKind::GenerateThumbnail { size: 100 },
+            attempts: 0,
+            enqueued_at: OffsetDateTime::now_utc(),
+        };
+        match ImageProcessor::process(&deps, job).await.unwrap() {
+            JobResult::Variant { bytes, .. } => {
+                let decoded = image::load_from_memory(&bytes.unwrap()).unwrap();
+                assert!(
+                    decoded.width().max(decoded.height()) <= 24,
+                    "variant must be bounded by max_dimension, got {}x{}",
+                    decoded.width(),
+                    decoded.height()
+                );
+            }
+            JobResult::Skipped => panic!("expected variant"),
+        }
     }
 }

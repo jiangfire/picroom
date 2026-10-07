@@ -154,6 +154,11 @@ pub async fn run(config: Option<PathBuf>, concurrency: usize) -> anyhow::Result<
         storage: deps.storage.clone(),
         dlq: Some(Arc::new(dlq) as Arc<dyn picroom_worker::DlqSink + Send + Sync>),
         variant_repo,
+        pipeline: picroom_worker::PipelineSettings {
+            avif_quality: cfg.pipeline.quality.avif,
+            jpeg_quality: cfg.pipeline.quality.jpeg,
+            max_dimension: cfg.pipeline.max_dimension,
+        },
     });
 
     let pool = WorkerPool::new(

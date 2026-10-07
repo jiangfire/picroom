@@ -18,5 +18,7 @@ pub use db_queue::{JobRow, PgJobQueue, SqliteJobQueue};
 pub use dlq::{DlqEntry, DlqSink};
 pub use job::{Job, JobError, JobKind, JobQueue, JobResult};
 pub use pool::WorkerPool;
-pub use processor::{ImageLookup, ImageProcessor, ProcessorDeps, VariantRepository};
+pub use processor::{
+    ImageLookup, ImageProcessor, PipelineSettings, ProcessorDeps, VariantRepository,
+};
 pub use retry::{RetryPolicy, RetryStrategy};

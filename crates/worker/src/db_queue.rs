@@ -21,18 +21,44 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct PgJobQueue {
     pool: PgPool,
+    /// How long a claimed job stays exclusively ours before another worker
+    /// may reclaim it (D-8).
+    lease_secs: i64,
+    /// Identity recorded in `jobs.claimed_by` for observability.
+    worker_id: String,
 }
 
 impl PgJobQueue {
-    /// Creates a new queue bound to the given pool.
-    pub const fn new(pool: PgPool) -> Self {
-        Self { pool }
+    /// Creates a new queue bound to the given pool (300 s lease).
+    pub fn new(pool: PgPool) -> Self {
+        Self::with_lease(pool, DEFAULT_LEASE_SECS)
+    }
+
+    /// Creates a new queue with an explicit lease duration in seconds.
+    pub fn with_lease(pool: PgPool, lease_secs: u64) -> Self {
+        Self {
+            pool,
+            lease_secs: lease_secs as i64,
+            worker_id: default_worker_id(),
+        }
     }
 
     /// Returns a clone of the underlying pool.
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
+}
+
+/// Default claim duration before a `running` job can be reclaimed.
+pub const DEFAULT_LEASE_SECS: u64 = 300;
+
+/// Stable-enough worker identity for the `claimed_by` column.
+fn default_worker_id() -> String {
+    format!(
+        "{}#{}",
+        std::env::var("HOSTNAME").unwrap_or_else(|_| "worker".into()),
+        std::process::id()
+    )
 }
 
 #[async_trait]
@@ -60,24 +86,33 @@ impl JobQueue for PgJobQueue {
     }
 
     async fn dequeue(&self) -> Result<Option<Job>, JobError> {
-        // `FOR UPDATE SKIP LOCKED` ensures two workers never grab the same row.
+        // `FOR UPDATE SKIP LOCKED` ensures two workers never grab the same
+        // row. Lease-expired `running` rows are re-claimable (D-8): a worker
+        // that died mid-job does not strand the image forever.
         let row: Option<JobRow> = sqlx::query_as::<_, JobRow>(
             r"
             WITH next_job AS (
                 SELECT id
                 FROM jobs
                 WHERE status = 'pending'
+                   OR (status = 'running'
+                       AND lease_expires_at IS NOT NULL
+                       AND lease_expires_at < NOW())
                 ORDER BY enqueued_at
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
             UPDATE jobs j
-            SET status = 'running', started_at = NOW(), attempts = attempts + 1
+            SET status = 'running', started_at = NOW(), attempts = attempts + 1,
+                lease_expires_at = NOW() + make_interval(secs => $2),
+                claimed_by = $3
             FROM next_job
             WHERE j.id = next_job.id
             RETURNING j.id, j.image_id, j.kind, j.payload, j.attempts, j.enqueued_at
             ",
         )
+        .bind(self.lease_secs as i32)
+        .bind(&self.worker_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| JobError::Processing(format!("dequeue: {e}")))?;
@@ -95,7 +130,7 @@ impl JobQueue for PgJobQueue {
             r"
             UPDATE jobs
             SET status = 'succeeded', finished_at = NOW(), last_error = NULL,
-                payload = $2
+                payload = $2, lease_expires_at = NULL, claimed_by = NULL
             WHERE id = $1
             ",
         )
@@ -112,7 +147,8 @@ impl JobQueue for PgJobQueue {
             r"
             UPDATE jobs
             SET status = CASE WHEN attempts >= 5 THEN 'dead' ELSE 'pending' END,
-                last_error = $2, finished_at = NOW()
+                last_error = $2, finished_at = NOW(),
+                lease_expires_at = NULL, claimed_by = NULL
             WHERE id = $1
             ",
         )
@@ -129,12 +165,25 @@ impl JobQueue for PgJobQueue {
 #[derive(Debug, Clone)]
 pub struct SqliteJobQueue {
     pool: SqlitePool,
+    /// Claim duration before a `running` job can be reclaimed (D-8).
+    lease_secs: i64,
+    /// Identity recorded in `jobs.claimed_by`.
+    worker_id: String,
 }
 
 impl SqliteJobQueue {
-    /// Creates a new queue bound to the given pool.
-    pub const fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Creates a new queue bound to the given pool (300 s lease).
+    pub fn new(pool: SqlitePool) -> Self {
+        Self::with_lease(pool, DEFAULT_LEASE_SECS)
+    }
+
+    /// Creates a new queue with an explicit lease duration in seconds.
+    pub fn with_lease(pool: SqlitePool, lease_secs: u64) -> Self {
+        Self {
+            pool,
+            lease_secs: lease_secs as i64,
+            worker_id: default_worker_id(),
+        }
     }
 
     /// Returns a clone of the underlying pool (useful for raw queries).
@@ -175,16 +224,23 @@ impl JobQueue for SqliteJobQueue {
         let row: Option<JobRow> = sqlx::query_as::<_, JobRow>(
             r"
             UPDATE jobs
-            SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1
+            SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1,
+                lease_expires_at = strftime('%Y-%m-%d %H:%M:%S', 'now', printf('%+d seconds', ?2)),
+                claimed_by = ?3
             WHERE id = (
                 SELECT id FROM jobs
                 WHERE status = 'pending'
+                   OR (status = 'running'
+                       AND lease_expires_at IS NOT NULL
+                       AND lease_expires_at < strftime('%Y-%m-%d %H:%M:%S', 'now'))
                 ORDER BY enqueued_at
                 LIMIT 1
             )
             RETURNING id, image_id, kind, payload, attempts, enqueued_at
             ",
         )
+        .bind(self.lease_secs as i32)
+        .bind(&self.worker_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| JobError::Processing(format!("dequeue: {e}")))?;
@@ -198,7 +254,7 @@ impl JobQueue for SqliteJobQueue {
         let result_json = serde_json::to_string(result)
             .map_err(|e| JobError::Processing(format!("serialize result: {e}")))?;
         sqlx::query(
-            r"UPDATE jobs SET status = 'succeeded', finished_at = CURRENT_TIMESTAMP, last_error = NULL, payload = ?2 WHERE id = ?1",
+            r"UPDATE jobs SET status = 'succeeded', finished_at = CURRENT_TIMESTAMP, last_error = NULL, payload = ?2, lease_expires_at = NULL, claimed_by = NULL WHERE id = ?1",
         )
         .bind(id.to_string())
         .bind(Some(result_json))
@@ -210,7 +266,7 @@ impl JobQueue for SqliteJobQueue {
 
     async fn fail(&self, id: Uuid, error: &str) -> Result<(), JobError> {
         sqlx::query(
-            r"UPDATE jobs SET status = CASE WHEN attempts >= 5 THEN 'dead' ELSE 'pending' END, last_error = ?2, finished_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            r"UPDATE jobs SET status = CASE WHEN attempts >= 5 THEN 'dead' ELSE 'pending' END, last_error = ?2, finished_at = CURRENT_TIMESTAMP, lease_expires_at = NULL, claimed_by = NULL WHERE id = ?1",
         )
         .bind(id.to_string())
         .bind(error)

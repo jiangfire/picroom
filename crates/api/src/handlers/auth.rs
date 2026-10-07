@@ -23,6 +23,30 @@ use std::sync::Arc;
 /// Cookie used to carry the OIDC `state`/`nonce` binding across the redirect.
 const OIDC_STATE_COOKIE: &str = "oidc_state";
 
+/// Records an auth audit event (best-effort: failures are logged, not fatal).
+async fn audit_auth(
+    state: &AppState,
+    action: picroom_audit::AuditAction,
+    actor_id: Option<uuid::Uuid>,
+    actor_label: Option<String>,
+) {
+    let event = picroom_audit::AuditEvent {
+        id: uuid::Uuid::now_v7(),
+        timestamp: time::OffsetDateTime::now_utc(),
+        actor_id,
+        actor_label,
+        action,
+        target_type: "auth".into(),
+        target_id: None,
+        ip: None,
+        user_agent: None,
+        metadata: serde_json::Value::Null,
+    };
+    if let Err(e) = state.audit.record(&event).await {
+        tracing::warn!(error = %e, "failed to record auth audit event");
+    }
+}
+
 /// `POST /api/v1/auth/login`
 ///
 /// Accepts `{ "email": "...", "password": "..." }`, looks the user up in the
@@ -41,14 +65,33 @@ pub async fn login(
     };
 
     // Look the user up by email.
-    let creds = user_repo
+    let creds = match user_repo
         .find_by_email(&body.email)
         .await
         .map_err(|e| ApiError::internal(format!("lookup: {e}")))?
-        .ok_or_else(|| ApiError::unauthorized("invalid credentials"))?;
+    {
+        Some(c) => c,
+        None => {
+            audit_auth(
+                &state,
+                picroom_audit::AuditAction::Login,
+                None,
+                Some(body.email),
+            )
+            .await;
+            return Err(ApiError::unauthorized("invalid credentials"));
+        }
+    };
 
     // Reject disabled accounts with the same error as "no such user".
     if creds.disabled {
+        audit_auth(
+            &state,
+            picroom_audit::AuditAction::Login,
+            None,
+            Some(body.email),
+        )
+        .await;
         return Err(ApiError::unauthorized("invalid credentials"));
     }
 
@@ -57,6 +100,13 @@ pub async fn login(
         .verify(&body.password, &creds.password_hash)
         .map_err(|e| ApiError::internal(format!("verify: {e}")))?;
     if !password_ok {
+        audit_auth(
+            &state,
+            picroom_audit::AuditAction::Login,
+            None,
+            Some(body.email),
+        )
+        .await;
         return Err(ApiError::unauthorized("invalid credentials"));
     }
 
@@ -85,6 +135,14 @@ pub async fn login(
         .jwt
         .issue_session(creds.id.to_string(), &scopes, sid)
         .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
+
+    audit_auth(
+        &state,
+        picroom_audit::AuditAction::Login,
+        Some(creds.id.as_uuid()),
+        None,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "access_token": token,
@@ -119,6 +177,13 @@ pub async fn logout(
                 .map_err(|e| ApiError::internal(format!("session revoke: {e}")))?;
         }
     }
+    audit_auth(
+        &state,
+        picroom_audit::AuditAction::Logout,
+        Some(auth.user_id.as_uuid()),
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -15,8 +15,7 @@ use picroom_api::AppState;
 use picroom_audit::NoopAuditSink;
 use picroom_domain::{Image, ImageId, Page, PageReq, StorageKey, Team, TeamId, TeamMember, UserId};
 use picroom_service::repo::{
-    AclGrant, ImageRepository, ResourceAclRepository, SessionRepository, SessionRow,
-    TeamRepository,
+    AclGrant, ImageRepository, ResourceAclRepository, SessionRepository, SessionRow, TeamRepository,
 };
 use picroom_service::{AuthzService, ServiceError};
 use picroom_storage::driver::LocalDriver;
@@ -89,13 +88,19 @@ impl TeamRepository for MemTeams {
             .cloned()
             .ok_or(picroom_domain::DomainError::NotFound.into())
     }
-    async fn list(&self) -> Result<Vec<Team>, ServiceError> {
-        Ok(self.teams.lock().expect("mutex poisoned").clone())
+    async fn list(&self, page: PageReq) -> Result<Page<Team>, ServiceError> {
+        let all = self.teams.lock().expect("mutex poisoned").clone();
+        let items: Vec<Team> = all.into_iter().take(page.limit as usize).collect();
+        Ok(Page::new(items, None, page))
     }
-    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError> {
+    async fn list_for_user(
+        &self,
+        user_id: UserId,
+        page: PageReq,
+    ) -> Result<Page<Team>, ServiceError> {
         let members = self.members.lock().expect("mutex poisoned");
         let teams = self.teams.lock().expect("mutex poisoned");
-        Ok(teams
+        let all: Vec<Team> = teams
             .iter()
             .filter(|t| {
                 members
@@ -103,7 +108,9 @@ impl TeamRepository for MemTeams {
                     .any(|(tid, uid, _)| *tid == t.id.0 && *uid == user_id.0)
             })
             .cloned()
-            .collect())
+            .collect();
+        let items: Vec<Team> = all.into_iter().take(page.limit as usize).collect();
+        Ok(Page::new(items, None, page))
     }
     async fn add_member(
         &self,
@@ -116,9 +123,13 @@ impl TeamRepository for MemTeams {
         members.push((team_id.0, user_id.0, role.to_string()));
         Ok(())
     }
-    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError> {
+    async fn list_members(
+        &self,
+        team_id: TeamId,
+        page: PageReq,
+    ) -> Result<Page<TeamMember>, ServiceError> {
         let members = self.members.lock().expect("mutex poisoned");
-        Ok(members
+        let all: Vec<TeamMember> = members
             .iter()
             .filter(|(tid, _, _)| *tid == team_id.0)
             .map(|(tid, uid, role)| TeamMember {
@@ -127,7 +138,9 @@ impl TeamRepository for MemTeams {
                 role: role.clone(),
                 joined_at: time::OffsetDateTime::UNIX_EPOCH,
             })
-            .collect())
+            .collect();
+        let items: Vec<TeamMember> = all.into_iter().take(page.limit as usize).collect();
+        Ok(Page::new(items, None, page))
     }
     async fn member_role(
         &self,

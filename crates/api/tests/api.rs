@@ -1011,8 +1011,14 @@ impl TeamRepository for InMemoryTeamRepo {
             .ok_or_else(|| ServiceError::Domain(picroom_domain::DomainError::NotFound))
     }
 
-    async fn list(&self) -> Result<Vec<Team>, ServiceError> {
-        Ok(self.teams.clone())
+    async fn list(&self, page: PageReq) -> Result<Page<Team>, ServiceError> {
+        let items: Vec<Team> = self
+            .teams
+            .iter()
+            .take(page.limit as usize)
+            .cloned()
+            .collect();
+        Ok(Page::new(items, None, page))
     }
 
     async fn add_member(
@@ -1024,28 +1030,40 @@ impl TeamRepository for InMemoryTeamRepo {
         Ok(())
     }
 
-    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, ServiceError> {
-        Ok(self
+    async fn list_members(
+        &self,
+        team_id: TeamId,
+        page: PageReq,
+    ) -> Result<Page<TeamMember>, ServiceError> {
+        let items: Vec<TeamMember> = self
             .members
             .iter()
             .filter(|m| m.team_id == team_id)
+            .take(page.limit as usize)
             .cloned()
-            .collect())
+            .collect();
+        Ok(Page::new(items, None, page))
     }
 
-    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<Team>, ServiceError> {
+    async fn list_for_user(
+        &self,
+        user_id: UserId,
+        page: PageReq,
+    ) -> Result<Page<Team>, ServiceError> {
         let member_team_ids: Vec<TeamId> = self
             .members
             .iter()
             .filter(|m| m.user_id == user_id)
             .map(|m| m.team_id)
             .collect();
-        Ok(self
+        let items: Vec<Team> = self
             .teams
             .iter()
             .filter(|t| member_team_ids.contains(&t.id))
+            .take(page.limit as usize)
             .cloned()
-            .collect())
+            .collect();
+        Ok(Page::new(items, None, page))
     }
 
     async fn member_role(
@@ -1554,4 +1572,58 @@ async fn body_limit_rejects_oversized_and_accepts_configured_size() {
         StatusCode::PAYLOAD_TOO_LARGE,
         "bodies over the configured limit must be rejected with 413"
     );
+}
+
+/// R-17: every login attempt — success and failure — lands in the audit log.
+#[tokio::test]
+async fn login_attempts_are_audited() {
+    let tmp = tempdir();
+    let storage = Arc::new(LocalDriver::new(tmp, "/i"));
+    let audit = Arc::new(picroom_audit::InMemoryAuditSink::new());
+    let hash = picroom_auth::PasswordHasher::new()
+        .hash(PASSWORD)
+        .expect("hash");
+    let mut users = HashMap::new();
+    users.insert(
+        "alice@example.com".to_string(),
+        UserCredentials {
+            id: picroom_domain::UserId(uuid::Uuid::now_v7()),
+            role: "admin".to_string(),
+            password_hash: hash,
+            disabled: false,
+        },
+    );
+    let repo: Arc<dyn UserRepository> = Arc::new(InMemoryUserRepo {
+        users,
+        all_users: vec![],
+    });
+    let state = Arc::new(AppState::for_dev(storage, audit.clone()).with_user_repo(repo));
+    let app = picroom_api::build_router(state);
+
+    // Wrong password → Login failure audited.
+    let (status, _) = post_login(app.clone(), "alice@example.com", "wrong-password").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Unknown email → Login failure audited.
+    let (status, _) = post_login(app.clone(), "nobody@example.com", PASSWORD).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Correct password → Login success audited.
+    let (status, _) = post_login(app.clone(), "alice@example.com", PASSWORD).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let events = audit.events();
+    let logins: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e.action, picroom_audit::AuditAction::Login))
+        .collect();
+    assert_eq!(
+        logins.len(),
+        3,
+        "two failures and one success must be audited"
+    );
+    // Failure rows carry the attempted email as the actor label, no actor id.
+    assert!(logins
+        .iter()
+        .any(|e| e.actor_id.is_none() && e.actor_label.as_deref() == Some("nobody@example.com")));
+    // Success carries the actor id.
+    assert!(logins.iter().any(|e| e.actor_id.is_some()));
 }
