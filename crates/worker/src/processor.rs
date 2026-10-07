@@ -87,16 +87,27 @@ impl ImageProcessor {
         match &job.kind {
             JobKind::EncodeAvif => {
                 let quality = settings.avif_quality;
-                let enc: Encoder = Box::new(move |img| avif_encode(img, quality));
+                let enc: Encoder =
+                    Box::new(move |img| picroom_imaging::processor::encode_avif(img, quality));
                 encode_variant(deps, &job, "avif", None, "avif", enc).await
             }
             JobKind::EncodeWebp => {
-                encode_variant(deps, &job, "webp", None, "webp", Box::new(webp_encode)).await
+                encode_variant(
+                    deps,
+                    &job,
+                    "webp",
+                    None,
+                    "webp",
+                    Box::new(picroom_imaging::processor::encode_webp),
+                )
+                .await
             }
             JobKind::GenerateThumbnail { size } => {
                 let size = *size;
                 let quality = settings.jpeg_quality;
-                let enc: Encoder = Box::new(move |img| thumbnail_encode(img, size, quality));
+                let enc: Encoder = Box::new(move |img| {
+                    picroom_imaging::processor::encode_thumbnail(img, size, quality)
+                });
                 // DB identity is `kind='thumbnail', size=<n>` (the CHECK
                 // constraint on `image_variants.kind` admits `thumbnail` only);
                 // the storage key keeps the size suffix so thumbnails of
@@ -205,64 +216,6 @@ fn bounded(img: image::DynamicImage, max_dimension: u32) -> image::DynamicImage 
         max_dimension,
         image::imageops::FilterType::Triangle,
     )
-}
-
-fn avif_encode(img: &image::DynamicImage, quality: f32) -> Result<Bytes, String> {
-    use ravif::{Img, RGB8};
-    let w = img.width() as usize;
-    let h = img.height() as usize;
-    let rgb = img.to_rgb8();
-    let pixels: Vec<RGB8> = rgb
-        .pixels()
-        .map(|p| {
-            let ch = p.0;
-            RGB8 {
-                r: ch[0],
-                g: ch[1],
-                b: ch[2],
-            }
-        })
-        .collect();
-    let enc = ravif::Encoder::new()
-        .with_quality(quality.clamp(0.0, 100.0))
-        .with_speed(6)
-        .encode_rgb(Img::new(pixels.as_slice(), w, h))
-        .map_err(|e| format!("ravif encode: {e:?}"))?;
-    Ok(Bytes::from(enc.avif_file))
-}
-
-fn webp_encode(img: &image::DynamicImage) -> Result<Bytes, String> {
-    let mut out = Vec::new();
-    let mut cur = std::io::Cursor::new(&mut out);
-    img.to_rgb8()
-        .write_to(&mut cur, image::ImageFormat::WebP)
-        .map_err(|e| e.to_string())?;
-    Ok(Bytes::from(out))
-}
-
-fn thumbnail_encode(
-    img: &image::DynamicImage,
-    size: u32,
-    jpeg_quality: u8,
-) -> Result<Bytes, String> {
-    // Shrink-only: never upscale a source that is already smaller than the
-    // requested thumbnail size (e.g. when max_dimension bounded it first).
-    let resized = {
-        let longest = img.width().max(img.height());
-        if longest <= size {
-            img.clone()
-        } else {
-            img.resize(size, size, image::imageops::FilterType::Triangle)
-        }
-    };
-    let mut out = Vec::new();
-    let encoder =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, jpeg_quality.clamp(1, 100));
-    resized
-        .to_rgb8()
-        .write_with_encoder(encoder)
-        .map_err(|e| e.to_string())?;
-    Ok(Bytes::from(out))
 }
 
 /// Helper: build a `DlqEntry` for a failed job.

@@ -47,8 +47,8 @@ impl DeleteService {
     /// Sets the authorization coordinator. Deletion is denied unless the
     /// actor owns the image, holds `Image/Delete` (manager/admin), or is
     /// allowed by the image's ACL — evaluated in the spec §10.3 order.
-    pub fn with_authz(mut self, authz: Arc<AuthzService>) -> Self {
-        self.authz = (*authz).clone();
+    pub fn with_authz(mut self, authz: &AuthzService) -> Self {
+        self.authz = authz.clone();
         self
     }
 

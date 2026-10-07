@@ -193,9 +193,18 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Team'
+                type: object
+                required: [items, has_more]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Team'
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: string
+                    nullable: true
     post:
       tags: [teams]
       summary: Create a team
@@ -212,7 +221,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Team'
+                type: object
+                required: [id, slug]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -246,9 +262,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/TeamMember'
+                type: object
+                required: [items, has_more]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamMember'
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: string
+                    nullable: true
+      '404':
+        $ref: '#/components/responses/NotFound'
     post:
       tags: [teams]
       summary: Add a member to a team
@@ -260,8 +287,8 @@ paths:
             schema:
               $ref: '#/components/schemas/AddMemberRequest'
       responses:
-        '201':
-          description: Created
+        '204':
+          description: Added (the implementation returns 204, not 201)
 
   /api/v1/images:
     get:
@@ -319,16 +346,18 @@ paths:
                   default: default
               required: [file]
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Uploaded (the implementation returns 200, not 201)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Image'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '413':
-          description: Quota exceeded
+          description: Quota exceeded or body over server.max_body_mb
           content:
             application/json:
               schema:
@@ -545,36 +574,21 @@ paths:
       summary: Query audit log
       operationId: queryAudit
       parameters:
-        - in: query
-          name: actor_id
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: action
-          schema:
-            type: string
-        - in: query
-          name: from
-          schema:
-            type: string
-            format: date-time
-        - in: query
-          name: to
-          schema:
-            type: string
-            format: date-time
+        # The handler reads only `limit` and `before` (RFC3339 upper bound);
+        # the previously documented actor_id/action/from/to/cursor filters
+        # were never implemented and are removed (R-24).
         - in: query
           name: limit
           schema:
             type: integer
             minimum: 1
             maximum: 500
-            default: 100
+            default: 50
         - in: query
-          name: cursor
+          name: before
           schema:
             type: string
+            format: date-time
       responses:
         '200':
           description: OK

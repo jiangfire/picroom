@@ -258,19 +258,17 @@ pub async fn delete(
             .permissions
             .check(&auth.roles, ResourceType::Image, PermissionAction::Delete)
             .is_ok();
-    match &state.delete_service {
-        Some(svc) => svc
-            .delete(&auth.actor(), image)
+    if let Some(svc) = &state.delete_service {
+        svc.delete(&auth.actor(), image)
             .await
-            .map_err(ApiError::from)?,
-        None => {
-            if !authorized {
-                return Err(ApiError::forbidden("not allowed"));
-            }
-            // Defensive fallback for environments without a DB-backed service.
-            if let Err(e) = state.storage.delete(&image.key).await {
-                tracing::warn!("storage delete failed: {e}");
-            }
+            .map_err(ApiError::from)?;
+    } else {
+        if !authorized {
+            return Err(ApiError::forbidden("not allowed"));
+        }
+        // Defensive fallback for environments without a DB-backed service.
+        if let Err(e) = state.storage.delete(&image.key).await {
+            tracing::warn!("storage delete failed: {e}");
         }
     }
     Ok(StatusCode::NO_CONTENT)

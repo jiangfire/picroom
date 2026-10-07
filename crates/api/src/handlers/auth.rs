@@ -65,22 +65,19 @@ pub async fn login(
     };
 
     // Look the user up by email.
-    let creds = match user_repo
+    let Some(creds) = user_repo
         .find_by_email(&body.email)
         .await
         .map_err(|e| ApiError::internal(format!("lookup: {e}")))?
-    {
-        Some(c) => c,
-        None => {
-            audit_auth(
-                &state,
-                picroom_audit::AuditAction::Login,
-                None,
-                Some(body.email),
-            )
-            .await;
-            return Err(ApiError::unauthorized("invalid credentials"));
-        }
+    else {
+        audit_auth(
+            &state,
+            picroom_audit::AuditAction::Login,
+            None,
+            Some(body.email),
+        )
+        .await;
+        return Err(ApiError::unauthorized("invalid credentials"));
     };
 
     // Reject disabled accounts with the same error as "no such user".

@@ -198,7 +198,7 @@ pub async fn build_storage(_cfg: &picroom_infra::Config) -> Result<Arc<dyn Stora
 }
 
 /// Parses S3 config from environment variables.
-fn parse_s3_config_from_env() -> Option<picroom_storage::driver::s3::S3Config> {
+pub fn parse_s3_config_from_env() -> Option<picroom_storage::driver::s3::S3Config> {
     let endpoint = std::env::var("PICROOM_STORAGE__POLICIES__MINIO__ENDPOINT")
         .or_else(|_| std::env::var("S3_ENDPOINT"))
         .ok()?;

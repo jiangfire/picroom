@@ -69,13 +69,19 @@ impl<Q: JobQueue + 'static, D: DlqSink + 'static> WorkerPool<Q, D> {
                                     }
                                 }
                                 Err(e) => {
-                                    let exhausted = job.attempts + 1 >= policy.max_attempts;
+                                    // `dequeue` already incremented `attempts`,
+                                    // so `job.attempts` IS the number of the
+                                    // attempt that just failed. Adding 1 more
+                                    // DLQ'd the job one attempt early while
+                                    // the DB still retried it — duplicate DLQ
+                                    // entries (R-31).
+                                    let exhausted = job.attempts >= policy.max_attempts;
                                     if exhausted {
                                         let _ = dlq
                                             .push(DlqEntry {
                                                 job_id: job.id,
                                                 error: e.clone(),
-                                                attempts: job.attempts + 1,
+                                                attempts: job.attempts,
                                                 moved_at: OffsetDateTime::now_utc(),
                                             })
                                             .await;
@@ -249,9 +255,7 @@ mod tests {
                 let calls = calls.clone();
                 async move {
                     let n = calls.fetch_add(1, Ordering::SeqCst);
-                    if n == 0 {
-                        panic!("boom: first job panics");
-                    }
+                    assert!(n > 0, "boom: first job panics");
                     // Second job must still be processed by the same slot.
                     stop.store(true, Ordering::SeqCst);
                     Ok::<JobResult, String>(JobResult::Skipped)

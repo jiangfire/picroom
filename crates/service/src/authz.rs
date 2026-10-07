@@ -106,7 +106,7 @@ impl AuthzService {
 }
 
 /// The team whose membership role applies — mirrors `Resource::team_scope`.
-fn team_scope(resource: &Resource) -> Option<uuid::Uuid> {
+const fn team_scope(resource: &Resource) -> Option<uuid::Uuid> {
     match resource.resource_type {
         ResourceType::Team => Some(resource.id),
         _ => resource.team_id,

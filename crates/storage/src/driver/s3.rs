@@ -590,11 +590,7 @@ impl StorageSigner for S3Driver {
             u8::from(now.month()),
             now.day()
         );
-        let host = self
-            .base_url
-            .host_str()
-            .ok_or_else(|| StorageError::Config("missing host".into()))?
-            .to_string();
+        let host = host_with_port(&self.base_url)?;
 
         let mut url = self.object_url(&self.config.bucket, key.as_str())?;
         url.query_pairs_mut()
@@ -676,11 +672,7 @@ impl S3Driver {
             u8::from(now.month()),
             now.day()
         );
-        let host = self
-            .base_url
-            .host_str()
-            .ok_or_else(|| StorageError::Config("missing host".into()))?
-            .to_string();
+        let host = host_with_port(&self.base_url)?;
         let canonical_uri = url.path();
         let canonical_query = canonical_query(url);
         let payload_hash = Self::sha256_hex(b"");
@@ -713,6 +705,20 @@ impl S3Driver {
             .append_pair("X-Amz-Signature", &signature);
         Ok(url.clone())
     }
+}
+
+/// The `host[:port]` authority for signing. R-16: `MinIO` and self-hosted
+/// endpoints usually run on a non-default port; signing `host` without it
+/// makes the client's canonical request (which includes the port) differ
+/// from ours and every request fails with `SignatureDoesNotMatch`.
+fn host_with_port(url: &Url) -> Result<String, StorageError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| StorageError::Config("missing host".into()))?;
+    Ok(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
 }
 
 impl crate::driver::Storage for S3Driver {}

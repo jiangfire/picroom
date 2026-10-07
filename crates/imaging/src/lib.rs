@@ -12,7 +12,6 @@
 //! - AVIF encoding
 //! - WebP encoding
 //! - Thumbnail generation
-//! - Watermark
 //!
 //! Processors run sequentially, each receiving a shared `PipelineContext`.
 

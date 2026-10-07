@@ -36,6 +36,7 @@ uuid = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+serde_yaml = { workspace = true }
 tokio = { workspace = true }
 mockall = { workspace = true }
 pretty_assertions = { workspace = true }

@@ -13,7 +13,40 @@ use bytes::Bytes;
 use picroom_domain::StorageKey;
 use sha2::{Digest, Sha256};
 use std::path::Path as FsPath;
+use std::str::FromStr;
 use std::sync::Arc;
+
+/// Validates the bucket name shape (R-15). Returns the failure response for a
+/// malformed name.
+fn bucket_invalid(bucket: &str) -> Option<Response> {
+    crate::bucket::BucketName::from_str(bucket).err().map(|e| {
+        xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucketName",
+            &format!("The specified bucket is not valid: {e}"),
+        )
+    })
+}
+
+/// The `NoSuchBucket` failure every object handler shares (R-15): a bucket
+/// this deployment does not serve must not silently share one flat namespace.
+fn no_such_bucket(bucket: &str) -> Response {
+    xml_error(
+        StatusCode::NOT_FOUND,
+        "NoSuchBucket",
+        &format!("The specified bucket does not exist: {bucket}"),
+    )
+}
+
+/// Shared pre-flight: name shape + configured-bucket match.
+fn bucket_guard<S: S3State>(state: &S, bucket: &str) -> Option<Response> {
+    bucket_invalid(bucket).or_else(|| {
+        state
+            .expected_bucket()
+            .filter(|expected| expected != bucket)
+            .map(|_| no_such_bucket(bucket))
+    })
+}
 
 /// Derives an S3-style quoted `ETag` (SHA-256 hex) from object bytes.
 fn etag_of(bytes: &[u8]) -> String {
@@ -38,8 +71,11 @@ fn content_type_of(key: &str) -> &'static str {
 /// `GET /s3/:bucket/:key`
 pub async fn get_object<S: S3State>(
     State(state): State<Arc<S>>,
-    Path((_bucket, key)): Path<(String, String)>,
+    Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
+    if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
+        return failure;
+    }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
         Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
@@ -69,13 +105,16 @@ pub async fn get_object<S: S3State>(
 /// existing object with a single fragment (R-01).
 pub async fn put_object<S: S3State>(
     State(state): State<Arc<S>>,
-    Path((_bucket, key)): Path<(String, String)>,
+    Path((bucket, key)): Path<(String, String)>,
     RawQuery(query): RawQuery,
     _headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     if let Some(rejection) = multipart_rejection(query.as_deref()) {
         return rejection;
+    }
+    if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
+        return failure;
     }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
@@ -91,8 +130,11 @@ pub async fn put_object<S: S3State>(
 /// `HEAD /s3/:bucket/:key`
 pub async fn head_object<S: S3State>(
     State(state): State<Arc<S>>,
-    Path((_bucket, key)): Path<(String, String)>,
+    Path((bucket, key)): Path<(String, String)>,
 ) -> Response {
+    if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
+        return failure;
+    }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
         Err(e) => return xml_error(StatusCode::BAD_REQUEST, "InvalidKey", &e.to_string()),
@@ -110,11 +152,14 @@ pub async fn head_object<S: S3State>(
 /// storage — routing them here must not delete the real object (R-01).
 pub async fn delete_object<S: S3State>(
     State(state): State<Arc<S>>,
-    Path((_bucket, key)): Path<(String, String)>,
+    Path((bucket, key)): Path<(String, String)>,
     RawQuery(query): RawQuery,
 ) -> Response {
     if let Some(rejection) = multipart_rejection(query.as_deref()) {
         return rejection;
+    }
+    if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
+        return failure;
     }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,

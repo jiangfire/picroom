@@ -7,15 +7,13 @@ pub mod avif;
 pub mod probe;
 pub mod resize;
 pub mod thumbnail;
-pub mod watermark;
 pub mod webp;
 
-pub use avif::AvifProcessor;
+pub use avif::encode_avif;
 pub use probe::ProbeProcessor;
 pub use resize::ResizeProcessor;
-pub use thumbnail::ThumbnailProcessor;
-pub use watermark::WatermarkProcessor;
-pub use webp::WebpProcessor;
+pub use thumbnail::encode_thumbnail;
+pub use webp::encode_webp;
 
 use async_trait::async_trait;
 use bytes::Bytes;

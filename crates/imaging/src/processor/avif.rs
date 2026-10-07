@@ -1,64 +1,59 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Picroom Contributors
 
-//! AVIF encoder.
+//! AVIF encoder — the single implementation backing the worker's
+//! `EncodeAvif` jobs (Q-7: the worker's private copy was deleted).
 
-use super::{Processor, ProcessorError, ProcessorOutput};
-use crate::PipelineContext;
-use async_trait::async_trait;
 use bytes::Bytes;
+use image::DynamicImage;
 
-/// Encodes images to AVIF.
-#[derive(Debug, Clone)]
-pub struct AvifProcessor {
-    quality: u8,
-    speed: u8,
-}
-
-impl AvifProcessor {
-    /// Creates an AVIF processor with the given quality (1–100) and speed (0–10).
-    pub const fn new(quality: u8, speed: u8) -> Self {
-        Self { quality, speed }
-    }
-
-    /// Returns the configured quality.
-    pub const fn quality(&self) -> u8 {
-        self.quality
-    }
-
-    /// Returns the configured speed.
-    pub const fn speed(&self) -> u8 {
-        self.speed
-    }
-}
-
-#[async_trait]
-impl Processor for AvifProcessor {
-    fn name(&self) -> &'static str {
-        "avif"
-    }
-
-    async fn process(
-        &self,
-        _ctx: &PipelineContext,
-        input: Bytes,
-    ) -> Result<ProcessorOutput, ProcessorError> {
-        // Placeholder: real implementation uses `ravif::Encoder`.
-        Ok(ProcessorOutput::Variant {
-            kind: "avif".to_string(),
-            bytes: input,
+/// Encodes a decoded image to AVIF at `quality` (0–100, ravif scale).
+pub fn encode_avif(img: &DynamicImage, quality: f32) -> Result<Bytes, String> {
+    use ravif::{Img, RGB8};
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    let rgb = img.to_rgb8();
+    let pixels: Vec<RGB8> = rgb
+        .pixels()
+        .map(|p| {
+            let ch = p.0;
+            RGB8 {
+                r: ch[0],
+                g: ch[1],
+                b: ch[2],
+            }
         })
-    }
+        .collect();
+    let enc = ravif::Encoder::new()
+        .with_quality(quality.clamp(0.0, 100.0))
+        .with_speed(6)
+        .encode_rgb(Img::new(pixels.as_slice(), w, h))
+        .map_err(|e| format!("ravif encode: {e:?}"))?;
+    Ok(Bytes::from(enc.avif_file))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn test_img() -> DynamicImage {
+        let img = image::RgbImage::from_fn(24, 16, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        DynamicImage::ImageRgb8(img)
+    }
+
     #[test]
-    fn new_stores_quality_and_speed() {
-        let p = AvifProcessor::new(60, 6);
-        assert_eq!(p.quality(), 60);
-        assert_eq!(p.speed(), 6);
+    fn encodes_valid_avif_at_quality() {
+        let out = encode_avif(&test_img(), 60.0).unwrap();
+        assert!(out.len() > 16);
+        // FTAV brand box marker.
+        assert_eq!(&out[4..12], b"ftypavif");
+    }
+
+    #[test]
+    fn quality_changes_output() {
+        let img = test_img();
+        let low = encode_avif(&img, 10.0).unwrap();
+        let high = encode_avif(&img, 95.0).unwrap();
+        assert_ne!(low, high);
     }
 }

@@ -848,7 +848,7 @@ Upload → Validate → Probe → Persist (original) → Enqueue job
                                    Emit audit event
 ```
 
-Pipeline is configurable per-storage-policy:
+Pipeline is configurable:
 
 ```toml
 [pipeline]
@@ -857,8 +857,19 @@ encode_webp = true
 generate_thumbnail = true
 strip_exif = true
 max_dimension = 8192
-quality = { avif = 60, webp = 80, jpeg = 85 }
+
+[pipeline.quality]
+avif = 60   # applied to the AVIF encoder (0-100)
+webp = 80   # reserved: WebP encoding is lossless-only (image crate), no effect
+jpeg = 85   # applied to generated thumbnails (1-100)
 ```
+
+- `max_dimension` bounds every generated variant (aspect-preserving downscale).
+- Generated variants are re-encoded from decoded pixels and never carry EXIF;
+  `strip_exif` therefore applies to variants. **Originals are stored
+  byte-exact** — stripping EXIF from uploaded originals is not implemented.
+- Variant jobs are enqueued only after the `images` row commits; jobs claim a
+  lease and dead-lease rows are reclaimed by live workers.
 
 ---
 

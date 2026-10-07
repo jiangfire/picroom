@@ -79,6 +79,14 @@ pub async fn create_policy(
     if body.name.trim().is_empty() || body.driver.trim().is_empty() {
         return Err(ApiError::bad_request("name and driver are required"));
     }
+    // The driver enum is closed in the API contract (R-24): only local and
+    // s3 backends exist in v1.
+    if !matches!(body.driver.as_str(), "local" | "s3") {
+        return Err(ApiError::bad_request(format!(
+            "unsupported driver '{}' (expected 'local' or 's3')",
+            body.driver
+        )));
+    }
 
     let repo = state
         .storage_policy_repo

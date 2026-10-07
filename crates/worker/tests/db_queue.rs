@@ -13,7 +13,8 @@ use picroom_domain::{ImageId, UserId};
 use picroom_storage::driver::LocalDriver;
 use picroom_storage::Storage;
 use picroom_worker::{
-    ImageLookup, ImageProcessor, Job, JobKind, JobQueue, JobResult, ProcessorDeps, SqliteJobQueue,
+    ImageLookup, ImageProcessor, Job, JobKind, JobQueue, JobResult, PipelineSettings,
+    ProcessorDeps, SqliteJobQueue,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -190,7 +191,7 @@ async fn full_pipeline_avif_roundtrip() {
         storage: storage.clone(),
         dlq: None,
         variant_repo: None,
-        pipeline: Default::default(),
+        pipeline: PipelineSettings::default(),
     };
 
     // Enqueue AVIF job.
@@ -268,7 +269,7 @@ async fn full_pipeline_webp_and_thumbnail() {
         storage: storage.clone(),
         dlq: None,
         variant_repo: None,
-        pipeline: Default::default(),
+        pipeline: PipelineSettings::default(),
     };
 
     // WebP.
@@ -393,70 +394,70 @@ async fn fail_returns_to_pending_until_max_attempts() {
 
     // Touch unused symbols to silence warnings.
     let _ = Duration::from_secs(0);
+}
 
-    /// R-12 / D-8: a row stuck in `running` past its lease is re-claimed by the
-    /// next dequeue; a row whose lease still holds is NOT.
-    #[tokio::test]
-    async fn lease_expired_running_row_is_reclaimed() {
-        let pool = make_pool().await;
-        let q = SqliteJobQueue::with_lease(pool.clone(), 300);
+/// R-12 / D-8: a row stuck in `running` past its lease is re-claimed by the
+/// next dequeue; a row whose lease still holds is NOT.
+#[tokio::test]
+async fn lease_expired_running_row_is_reclaimed() {
+    let pool = make_pool().await;
+    let q = SqliteJobQueue::with_lease(pool.clone(), 300);
 
-        let job_id = Uuid::now_v7();
-        sqlx::query(
-        r"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at, lease_expires_at, claimed_by)
-          VALUES (?1, ?2, ?3, 'running', 1, ?4, ?5, 'dead-worker')",
-    )
-    .bind(job_id.to_string())
-    .bind(Uuid::now_v7().to_string())
-    .bind(r#"{"kind":"encode_avif"}"#)
-    .bind(OffsetDateTime::now_utc().to_string())
-    .bind("2000-01-01 00:00:00") // far in the past → lease expired
-    .execute(&pool)
-    .await
-    .unwrap();
+    let job_id = Uuid::now_v7();
+    sqlx::query(
+    r"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at, lease_expires_at, claimed_by)
+      VALUES (?1, ?2, ?3, 'running', 1, ?4, ?5, 'dead-worker')",
+)
+.bind(job_id.to_string())
+.bind(Uuid::now_v7().to_string())
+.bind(r#"{"kind":"encode_avif"}"#)
+.bind(OffsetDateTime::now_utc())
+.bind("2000-01-01 00:00:00") // far in the past → lease expired
+.execute(&pool)
+.await
+.unwrap();
 
-        let claimed = q
-            .dequeue()
-            .await
-            .unwrap()
-            .expect("expired lease must be re-claimed");
-        assert_eq!(claimed.id, job_id);
-        // Completing clears the lease.
-        q.complete(claimed.id, &picroom_worker::JobResult::Skipped)
+    let claimed = q
+        .dequeue()
+        .await
+        .unwrap()
+        .expect("expired lease must be re-claimed");
+    assert_eq!(claimed.id, job_id);
+    // Completing clears the lease.
+    q.complete(claimed.id, &picroom_worker::JobResult::Skipped)
+        .await
+        .unwrap();
+    let (status, lease): (String, Option<String>) =
+        sqlx::query_as("SELECT status, lease_expires_at FROM jobs WHERE id = ?1")
+            .bind(job_id.to_string())
+            .fetch_one(&pool)
             .await
             .unwrap();
-        let (status, lease): (String, Option<String>) =
-            sqlx::query_as("SELECT status, lease_expires_at FROM jobs WHERE id = ?1")
-                .bind(job_id.to_string())
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(status, "succeeded");
-        assert!(lease.is_none(), "complete must clear the lease");
-    }
+    assert_eq!(status, "succeeded");
+    assert!(lease.is_none(), "complete must clear the lease");
+}
 
-    #[tokio::test]
-    async fn live_lease_is_not_reclaimed() {
-        let pool = make_pool().await;
-        let q = SqliteJobQueue::with_lease(pool.clone(), 3600);
+#[tokio::test]
+async fn live_lease_is_not_reclaimed() {
+    let pool = make_pool().await;
+    let q = SqliteJobQueue::with_lease(pool.clone(), 3600);
 
-        let job_id = Uuid::now_v7();
-        sqlx::query(
-        r"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at, lease_expires_at, claimed_by)
-          VALUES (?1, ?2, ?3, 'running', 1, ?4, ?5, 'live-worker')",
-    )
-    .bind(job_id.to_string())
-    .bind(Uuid::now_v7().to_string())
-    .bind(r#"{"kind":"encode_avif"}"#)
-    .bind(OffsetDateTime::now_utc().to_string())
-    .bind("2100-01-01 00:00:00") // far in the future → lease holds
-    .execute(&pool)
-    .await
-    .unwrap();
+    let job_id = Uuid::now_v7();
+    sqlx::query(
+    r"INSERT INTO jobs (id, image_id, kind, status, attempts, enqueued_at, lease_expires_at, claimed_by)
+      VALUES (?1, ?2, ?3, 'running', 1, ?4, ?5, 'live-worker')",
+)
+.bind(job_id.to_string())
+.bind(Uuid::now_v7().to_string())
+.bind(r#"{"kind":"encode_avif"}"#)
+.bind(OffsetDateTime::now_utc())
+.bind("2100-01-01 00:00:00") // far in the future → lease holds
+.execute(&pool)
+.await
+.unwrap();
 
-        assert!(
-            q.dequeue().await.unwrap().is_none(),
-            "a live lease must not be stolen"
-        );
-    }
+    assert!(
+        q.dequeue().await.unwrap().is_none(),
+        "a live lease must not be stolen"
+    );
 }

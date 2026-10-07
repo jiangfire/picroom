@@ -26,7 +26,7 @@ use std::sync::Arc;
 /// guards stay in one place (ADR-0004: clients fall back to a single `PUT`).
 pub(crate) fn multipart_rejection(query: Option<&str>) -> Option<Response> {
     let is_multipart = query?.split('&').any(|pair| {
-        let name = pair.split_once('=').map(|(k, _)| k).unwrap_or(pair);
+        let name = pair.split_once('=').map_or(pair, |(k, _)| k);
         matches!(name, "uploadId" | "partNumber")
     });
     is_multipart.then(|| {

@@ -11,9 +11,18 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Repositories only available on a PostgreSQL connection.
+type PgRepos = (
+    Option<Arc<dyn picroom_service::SessionRepository>>,
+    Option<Arc<dyn picroom_service::ResourceAclRepository>>,
+);
+
 /// Runs the API server.
+#[allow(clippy::too_many_lines)] // linear dependency wiring
 pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyhow::Result<()> {
     let cfg = picroom_infra::load_config_from(config.as_deref())?;
+    picroom_admin::config_cmd::validate_config(&cfg)
+        .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
     picroom_infra::init_logging(&cfg.logging.level, &cfg.logging.format);
     picroom_infra::init_metrics();
 
@@ -93,10 +102,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
     // Unified delete service: routes DELETE through storage + repo + audit.
     // Authorization (owner / ACL / RBAC) is enforced inside the service (D-7).
     // Session + ACL repositories are only available on PostgreSQL.
-    let (session_repo, acl_repo): (
-        Option<Arc<dyn picroom_service::SessionRepository>>,
-        Option<Arc<dyn picroom_service::ResourceAclRepository>>,
-    ) = match &deps.db {
+    let (session_repo, acl_repo): PgRepos = match &deps.db {
         Some(DatabaseHandle::Pg(pool)) => (
             Some(Arc::new(picroom_service::PgSessionRepository::new(
                 pool.clone(),
@@ -122,7 +128,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         )),
         _ => Arc::new(picroom_service::AuthzService::without_backends()),
     };
-    upload = upload.with_authz(authz.clone());
+    upload = upload.with_authz(&authz);
     let delete_service = deps.image_repo.as_ref().map(|repo| {
         Arc::new(
             picroom_service::DeleteService::new(
@@ -130,7 +136,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
                 repo.clone(),
                 deps.audit.clone(),
             )
-            .with_authz(authz.clone()),
+            .with_authz(&authz),
         )
     });
 
@@ -148,6 +154,13 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         // S3 SigV4 enforcement is opt-in: set PICROOM_S3_ACCESS_KEY_ID +
         // PICROOM_S3_SECRET_ACCESS_KEY to require signed S3 requests.
         s3_credentials: read_s3_credentials(),
+        // Bucket scoping (R-15): when the deployment names its bucket
+        // (S3_BUCKET / PICROOM_S3_BUCKET), requests for any other bucket
+        // answer NoSuchBucket instead of sharing the flat namespace.
+        s3_bucket: std::env::var("PICROOM_S3_BUCKET")
+            .or_else(|_| std::env::var("S3_BUCKET"))
+            .ok()
+            .filter(|b| !b.is_empty()),
         public_url_base: cfg.server.public_url_base.clone(),
         storage_policy_repo,
         oidc_providers: Arc::new(cfg.auth.oidc.providers.clone()),

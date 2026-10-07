@@ -223,7 +223,7 @@ async fn viewer_actor_cannot_stage_upload() {
     let driver = LocalDriver::new(tmp.clone(), "/i");
     let audit = InMemoryAuditSink::new();
     let svc = UploadService::new(Arc::new(driver), Arc::new(audit))
-        .with_authz(Arc::new(picroom_service::AuthzService::without_backends()));
+        .with_authz(&picroom_service::AuthzService::without_backends());
 
     let viewer = Actor::with_roles(Uuid::now_v7(), vec![picroom_auth::Role::Viewer]);
     let err = svc
@@ -323,7 +323,7 @@ async fn delete_service_rejects_non_owner_actor() {
         Arc::new(NoopRepo),
         Arc::new(picroom_audit::InMemoryAuditSink::new()),
     )
-    .with_authz(Arc::new(picroom_service::AuthzService::without_backends()));
+    .with_authz(&picroom_service::AuthzService::without_backends());
 
     // A random non-owner with no role is denied.
     let stranger = Actor::with_roles(Uuid::now_v7(), vec![]);

@@ -53,8 +53,7 @@ impl SessionRepository for MemSessions {
             .lock()
             .expect("mutex poisoned")
             .remove(&id)
-            .map(|_| 1)
-            .unwrap_or(0))
+            .map_or(0, |_| 1))
     }
     async fn revoke_all_for_user(&self, user_id: Uuid) -> Result<u64, ServiceError> {
         let mut rows = self.rows.lock().expect("mutex poisoned");
@@ -86,11 +85,17 @@ impl TeamRepository for MemTeams {
             .iter()
             .find(|t| t.id == id)
             .cloned()
-            .ok_or(picroom_domain::DomainError::NotFound.into())
+            .ok_or_else(|| picroom_domain::DomainError::NotFound.into())
     }
     async fn list(&self, page: PageReq) -> Result<Page<Team>, ServiceError> {
-        let all = self.teams.lock().expect("mutex poisoned").clone();
-        let items: Vec<Team> = all.into_iter().take(page.limit as usize).collect();
+        let items: Vec<Team> = self
+            .teams
+            .lock()
+            .expect("mutex poisoned")
+            .iter()
+            .take(page.limit as usize)
+            .cloned()
+            .collect();
         Ok(Page::new(items, None, page))
     }
     async fn list_for_user(
@@ -100,16 +105,16 @@ impl TeamRepository for MemTeams {
     ) -> Result<Page<Team>, ServiceError> {
         let members = self.members.lock().expect("mutex poisoned");
         let teams = self.teams.lock().expect("mutex poisoned");
-        let all: Vec<Team> = teams
+        let items: Vec<Team> = teams
             .iter()
             .filter(|t| {
                 members
                     .iter()
                     .any(|(tid, uid, _)| *tid == t.id.0 && *uid == user_id.0)
             })
+            .take(page.limit as usize)
             .cloned()
             .collect();
-        let items: Vec<Team> = all.into_iter().take(page.limit as usize).collect();
         Ok(Page::new(items, None, page))
     }
     async fn add_member(
@@ -129,9 +134,10 @@ impl TeamRepository for MemTeams {
         page: PageReq,
     ) -> Result<Page<TeamMember>, ServiceError> {
         let members = self.members.lock().expect("mutex poisoned");
-        let all: Vec<TeamMember> = members
+        let items: Vec<TeamMember> = members
             .iter()
             .filter(|(tid, _, _)| *tid == team_id.0)
+            .take(page.limit as usize)
             .map(|(tid, uid, role)| TeamMember {
                 team_id: TeamId(*tid),
                 user_id: UserId(*uid),
@@ -139,7 +145,6 @@ impl TeamRepository for MemTeams {
                 joined_at: time::OffsetDateTime::UNIX_EPOCH,
             })
             .collect();
-        let items: Vec<TeamMember> = all.into_iter().take(page.limit as usize).collect();
         Ok(Page::new(items, None, page))
     }
     async fn member_role(
@@ -227,7 +232,7 @@ impl ImageRepository for MemImages {
             .iter()
             .find(|i| i.id == id)
             .cloned()
-            .ok_or(picroom_domain::DomainError::NotFound.into())
+            .ok_or_else(|| picroom_domain::DomainError::NotFound.into())
     }
     async fn list_for_owner(
         &self,
@@ -267,7 +272,7 @@ struct TestApp {
 }
 
 /// Builds the app the way the binary does for the pieces under test:
-/// upload/delete services carry the AuthzService backed by the same
+/// upload/delete services carry the `AuthzService` backed by the same
 /// in-memory repos the state exposes.
 fn build_p1_app() -> TestApp {
     let storage = Arc::new(LocalDriver::new(tempdir(), "/i"));
@@ -283,7 +288,7 @@ fn build_p1_app() -> TestApp {
         .with_session_repo(sessions.clone() as Arc<_>)
         .with_acl_repo(acls.clone() as Arc<_>)
         .with_authz(authz.clone())
-        .with_upload_authz(authz);
+        .with_upload_authz(&authz);
 
     // Route deletes through the service (as api_cmd does) so enforcement
     // happens in the service layer.
@@ -294,7 +299,7 @@ fn build_p1_app() -> TestApp {
     let audit_arc: Arc<dyn picroom_audit::AuditSink> = Arc::new(NoopAuditSink);
     state.delete_service = Some(Arc::new(
         picroom_service::DeleteService::new(storage_writer, images.clone() as Arc<_>, audit_arc)
-            .with_authz(state.authz.clone()),
+            .with_authz(&state.authz),
     ));
 
     let app = picroom_api::build_router(Arc::new(state));
@@ -753,4 +758,4 @@ async fn deny_grant_blocks_even_admin_delete_via_service() {
 
 /// Keep the unused-import lint honest about helpers only used in some tests.
 #[allow(unused)]
-fn _t(_: Duration) {}
+const fn _t(_: Duration) {}

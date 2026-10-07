@@ -3,10 +3,12 @@
 
 //! S3 `ListObjectsV2` handler.
 
+use crate::error::xml_error;
 use crate::S3State;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Query parameters for `ListObjectsV2`.
@@ -18,61 +20,105 @@ pub struct ListParams {
     pub delimiter: Option<String>,
     #[serde(rename = "max-keys")]
     pub max_keys: Option<u32>,
+    #[serde(rename = "continuation-token")]
     pub continuation_token: Option<String>,
 }
 
 /// `GET /s3/:bucket` — `ListObjectsV2`.
 ///
 /// Picroom stores objects without a bucket prefix (path-style keys), so a
-/// bucket maps to the entire backing store; `list` is invoked with no prefix
-/// to enumerate every object.
+/// bucket maps to the entire backing store. `prefix`, `max-keys` and
+/// `continuation-token` are honored (R-15/R-16): the token is the last key of
+/// the previous page and listing resumes strictly after it, matching S3's
+/// lexicographic semantics closely enough for `aws s3 ls`/`rclone` paging.
 pub async fn list_objects_v2<S: S3State>(
     State(state): State<Arc<S>>,
     Path(bucket): Path<String>,
-    Query(_params): Query<ListParams>,
+    Query(params): Query<ListParams>,
 ) -> Response {
+    // R-15: malformed name -> InvalidBucketName; a configured deployment's
+    // bucket mismatch -> NoSuchBucket.
+    if crate::bucket::BucketName::from_str(&bucket).is_err() {
+        return xml_error(
+            StatusCode::BAD_REQUEST,
+            "InvalidBucketName",
+            "The specified bucket is not valid.",
+        );
+    }
+    if let Some(expected) = state.expected_bucket() {
+        if expected != bucket {
+            return xml_error(
+                StatusCode::NOT_FOUND,
+                "NoSuchBucket",
+                &format!("The specified bucket does not exist: {bucket}"),
+            );
+        }
+    }
+
+    let max_keys = params.max_keys.unwrap_or(1000).clamp(1, 1000) as usize;
+    let prefix = params.prefix.unwrap_or_default();
+    let token = params.continuation_token.unwrap_or_default();
+
     match state.storage().list(None).await {
         Ok(page) => {
-            let items: Vec<String> = page
+            // Filter by prefix, resume after the continuation token, then cap
+            // at max_keys — S3 returns keys in lexicographic order.
+            let mut keyed: Vec<(String, u64)> = page
                 .items
                 .iter()
-                .map(|m| {
-                    format!(
-                        r"<Contents><Key>{}</Key><Size>{}</Size></Contents>",
-                        m.key.as_str(),
-                        m.bytes
-                    )
+                .map(|m| (m.key.as_str().to_string(), m.bytes))
+                .filter(|(k, _)| k.starts_with(&prefix))
+                .filter(|(k, _)| token.is_empty() || k.as_str() > token.as_str())
+                .collect();
+            keyed.sort_by(|a, b| a.0.cmp(&b.0));
+            let truncated = keyed.len() > max_keys;
+            let keyed: Vec<(String, u64)> = keyed.into_iter().take(max_keys).collect();
+
+            let contents: Vec<String> = keyed
+                .iter()
+                .map(|(k, bytes)| {
+                    format!("<Contents><Key>{k}</Key><Size>{bytes}</Size></Contents>")
                 })
                 .collect();
+
+            let next_token = if truncated {
+                keyed.last().map(|(k, _)| k.clone())
+            } else {
+                None
+            };
 
             let xml = format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 <Name>{bucket}</Name>
-<IsTruncated>false</IsTruncated>
+<IsTruncated>{truncated}</IsTruncated>
 <KeyCount>{count}</KeyCount>
-<MaxKeys>1000</MaxKeys>
+<MaxKeys>{max_keys}</MaxKeys>
+<Prefix>{prefix}</Prefix>
+{next}
 {contents}
 </ListBucketResult>"#,
                 bucket = bucket,
-                count = items.len(),
-                contents = items.join("\n"),
+                truncated = truncated,
+                count = contents.len(),
+                max_keys = max_keys,
+                prefix = prefix,
+                next = next_token
+                    .map(|t| format!("<NextContinuationToken>{t}</NextContinuationToken>"))
+                    .unwrap_or_default(),
+                contents = contents.join("\n"),
             );
             (StatusCode::OK, [("content-type", "application/xml")], xml).into_response()
         }
-        Err(e) => s3_xml_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-            &e.to_string(),
-        ),
+        Err(e) => {
+            tracing::error!("s3 list failed: {e}");
+            xml_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                "An internal error occurred",
+            )
+        }
     }
-}
-
-fn s3_xml_error(status: StatusCode, code: &str, message: &str) -> Response {
-    let xml = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>{code}</Code><Message>{message}</Message></Error>"#
-    );
-    (status, [("content-type", "application/xml")], xml).into_response()
 }
 
 #[cfg(test)]

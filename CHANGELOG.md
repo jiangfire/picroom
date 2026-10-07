@@ -5,6 +5,71 @@ All notable changes to Picroom are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-07
+
+### Fixed — v1.0 review remediation (docs/review-v1.0.md, all 33 findings)
+
+Critical (data loss / auth bypass):
+
+- S3 multipart-shaped `PUT`/`DELETE` no longer fall through to whole-object
+  handlers; they answer `501 NotImplemented` without touching storage (R-01).
+- Thumbnail rows persist as `kind='thumbnail'` with the size in `size`
+  (the old `thumbnail_200` kind violated the DB CHECK and rows vanished
+  while jobs reported success) (R-02).
+- `SigV4` verifies request freshness (±15 min) and hashes the received body
+  when a payload hash is declared; `SignedHeaders` must include `host` and
+  `x-amz-date` and every declared header must be present (R-03, R-07).
+- Variant jobs are enqueued only after the `images` row is committed (R-04).
+
+High:
+
+- Authorization moved into the service layer (`UploadService`, `DeleteService`)
+  with the full spec §10.3 evaluation order: explicit deny → ownership → team
+  role → ACL allow → global role → default deny. An explicit deny now
+  overrides even the `admin` role (R-05, R-09).
+- `server.max_body_mb` is actually enforced via `DefaultBodyLimit`; uploads
+  over the limit answer 413 (R-06).
+- Team endpoints are scoped: `GET /teams` returns the caller's teams,
+  `GET /teams/{id}[/members]` requires membership or `Team/Read` (404
+  otherwise), and the `team_id` upload field is validated against membership
+  (R-13).
+- `logout` and disabling a user revoke outstanding tokens via real sessions
+  (JWT `sid` ↔ `sessions` table) (R-08, R-20).
+- ACLs: migrations 0009/0010, `ResourceAclRepository` (Pg + SQLite),
+  `GET/PUT/DELETE /api/v1/images/{id}/acl`, OpenAPI documented (D-9–D-11).
+- CI lint gate is green: quota stubs and the signing skeleton deleted, no
+  `#[allow]` used (R-14).
+
+Medium/Low:
+
+- `[pipeline]` config is honored end to end: encoder quality, `max_dimension`,
+  and the encode toggles; `strip_exif` documented as variants-only (R-10).
+- Worker: per-job panic guard (jobs fail into retry/DLQ, slots survive) and
+  job leases with dead-worker reclaim (R-11, R-12).
+- Bucket scoping with `NoSuchBucket`; `host[:port]` signing for MinIO;
+  `prefix`/`max-keys`/`continuation-token` in ListObjectsV2 (R-15, R-16).
+- Login/logout are audited; `audit_events` is append-only (trigger-rejected
+  UPDATE/DELETE) (R-17).
+- `image_variants` upsert is idempotent (COALESCE unique index, migration
+  0012) (R-18).
+- Team quotas (`team_quotas`, migration 0014) with the SQLite dev path
+  enforced; `charge_user` stub deleted (R-21).
+- Desktop: JWT moved to the OS keychain, release builds refuse plain-HTTP
+  server URLs, capabilities narrowed to https + localhost (R-22).
+- OpenAPI reconciled with the implementation; a two-way route drift check
+  runs in CI (R-24).
+- Team queries are paginated and clamped (R-25).
+- GIF uploads are rejected at the MIME gate instead of 500ing in the decoder
+  (R-26).
+- `storage test --policy` tests the named policy; `audit`/`user`/`team`
+  honor `--config`; `config validate` checks semantics (R-27).
+- `crates/imaging` is the single encoder implementation (worker's private
+  copies deleted); resize guards zero dimensions; local temp files are unique
+  and hidden from listings; the retry off-by-one no longer duplicates DLQ
+  entries (R-28–R-31, R-32 type merge into `picroom-domain`).
+
+Coverage gate raised 60 → 65 (spec target 80 % tracked in P4).
+
 ## [Unreleased]
 
 Post-1.0.0 hardening and feature work. Will roll up into 1.1.0.

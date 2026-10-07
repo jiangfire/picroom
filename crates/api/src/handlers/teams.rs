@@ -185,7 +185,7 @@ pub async fn add_member(
         .member_role(TeamId(id), auth.user_id)
         .await
         .unwrap_or(None);
-    let team_allowed = matches!(team_role.as_deref(), Some("manager") | Some("admin"));
+    let team_allowed = matches!(team_role.as_deref(), Some("manager" | "admin"));
     if !global_allowed && !team_allowed {
         return Err(ApiError::forbidden("not allowed"));
     }

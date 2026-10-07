@@ -42,6 +42,13 @@ pub trait S3State: Clone + Send + Sync + 'static {
     /// Returns the S3 client credential to validate `SigV4` signatures
     /// against. When `None`, the S3 endpoint runs unauthenticated (dev mode).
     fn s3_credentials(&self) -> Option<S3Credential>;
+
+    /// The bucket this deployment serves, when one is configured. Requests
+    /// naming any other bucket get `NoSuchBucket` instead of silently sharing
+    /// one flat namespace (R-15). `None` accepts any well-formed name.
+    fn expected_bucket(&self) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]

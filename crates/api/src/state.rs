@@ -57,6 +57,9 @@ pub struct AppState {
     pub delete_service: Option<Arc<DeleteService>>,
     /// Optional S3 client credential; when set, the S3 endpoint enforces `SigV4`.
     pub s3_credentials: Option<picroom_s3compat::S3Credential>,
+    /// The S3 bucket this deployment serves; requests naming another bucket
+    /// get `NoSuchBucket` instead of sharing one flat namespace (R-15).
+    pub s3_bucket: Option<String>,
     /// Public base URL for image links (e.g. `"https://cdn.example.com"`).
     /// When `None`, the link handler emits a path-relative `/i/{key}` URL.
     pub public_url_base: Option<String>,
@@ -125,6 +128,7 @@ impl AppState {
             audit_reader: None,
             delete_service: None,
             s3_credentials: None,
+            s3_bucket: None,
             public_url_base: None,
             storage_policy_repo: None,
             oidc_providers: Arc::new(HashMap::new()),
@@ -154,7 +158,7 @@ impl AppState {
     /// service-layer `Image/Create` / `Image/Delete` checks). Test and
     /// wiring convenience over rebuilding `upload` by hand.
     #[must_use]
-    pub fn with_upload_authz(mut self, authz: Arc<AuthzService>) -> Self {
+    pub fn with_upload_authz(mut self, authz: &AuthzService) -> Self {
         self.upload = Arc::new(UploadService {
             storage: self.upload.storage.clone(),
             audit: self.upload.audit.clone(),
@@ -253,6 +257,10 @@ impl picroom_s3compat::S3State for AppState {
 
     fn s3_credentials(&self) -> Option<picroom_s3compat::S3Credential> {
         self.s3_credentials.clone()
+    }
+
+    fn expected_bucket(&self) -> Option<String> {
+        self.s3_bucket.clone()
     }
 }
 

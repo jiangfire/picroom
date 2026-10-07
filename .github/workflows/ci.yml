@@ -115,9 +115,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin --locked
-      # Interim floor (see job header). Raise toward 80 % as coverage grows.
+      # Interim floor (see job header). 60 → 65 after the v1.0 remediation
+      # added handler/service/worker/ACL tests; 80 % remains the spec target
+      # (docs/tasks-remediation-v1.md P4).
       - name: Run coverage
-        run: cargo tarpaulin --workspace --fail-under 60 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
+        run: cargo tarpaulin --workspace --fail-under 65 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:

@@ -1476,7 +1476,7 @@ async fn upload_with_team_id_associates_team() {
 }
 
 /// R-06: `server.max_body_mb` must actually bound bodies. The HTTP layer
-/// (api_cmd) stacks `DefaultBodyLimit::max(max_body_mb * 1MB)` on the router —
+/// (`api_cmd`) stacks `DefaultBodyLimit::max(max_body_mb * 1MB)` on the router —
 /// the mechanism axum's `Bytes`/`Multipart` extractors consult. Before this
 /// fix only `RequestBodyLimitLayer` was installed, which the extractors
 /// ignore, so every upload was capped at axum's 2 MiB extractor default.
@@ -1488,9 +1488,9 @@ async fn body_limit_rejects_oversized_and_accepts_configured_size() {
     // Incompressible-ish 1200x1200 PNG (~4.3 MB), comfortably above the 2 MiB
     // extractor default but below the configured limit.
     let img = image::RgbImage::from_fn(1200, 1200, |x, y| {
-        let v = ((x as u64)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add((y as u64).wrapping_mul(1442695040888963407))
+        let v = (u64::from(x)
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(u64::from(y).wrapping_mul(1_442_695_040_888_963_407))
             >> 33) as u8;
         image::Rgb([v, v.wrapping_add(1), 64])
     });

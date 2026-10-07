@@ -6,8 +6,10 @@
 //! Dispatches to `api`, `worker`, or `admin` subcommands.
 
 use clap::{Parser, Subcommand};
+use picroom_storage::driver::{LocalDriver, S3Driver};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 mod api_cmd;
 mod app;
@@ -78,6 +80,10 @@ enum AdminCmd {
     #[command(subcommand)]
     Config(ConfigCmd),
     /// Round-trip test for a storage policy.
+    ///
+    /// `--policy local` always tests the local filesystem driver; any other
+    /// name selects the S3/MinIO policy from the environment and FAILS when
+    /// that policy is unconfigured or its credentials are wrong.
     StorageTest {
         /// Policy name from config.
         #[arg(long, default_value = "default")]
@@ -91,6 +97,9 @@ enum MigrateAction {
     /// Apply all pending migrations.
     Run,
     /// Revert the most recent migration.
+    ///
+    /// Not supported: only forward migrations ship, so this always fails
+    /// safe (exits with an error, touching nothing).
     Revert,
     /// Show migration status.
     Status,
@@ -169,22 +178,24 @@ async fn main() -> ExitCode {
                  (only forward migrations exist)"
             )),
         },
-        Command::Admin(AdminCmd::User(cmd)) => {
-            run_user_cmd(cmd).await.map_err(|e| anyhow::anyhow!("{e}"))
-        }
-        Command::Admin(AdminCmd::Team(cmd)) => {
-            run_team_cmd(cmd).await.map_err(|e| anyhow::anyhow!("{e}"))
-        }
+        Command::Admin(AdminCmd::User(cmd)) => run_user_cmd(cmd, cli.config.as_deref())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}")),
+        Command::Admin(AdminCmd::Team(cmd)) => run_team_cmd(cmd, cli.config.as_deref())
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}")),
         Command::Admin(AdminCmd::Audit { follow, actor }) => {
-            match std::env::var("PICROOM_DATABASE__URL") {
-                Ok(url) => match picroom_admin::user::open_pool(&url).await {
-                    Ok(pool) => picroom_admin::audit_tail(&pool, follow, actor)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{e}")),
-                    Err(e) => Err(anyhow::anyhow!("open pool: {e}")),
-                },
-                Err(_) => Err(anyhow::anyhow!("PICROOM_DATABASE__URL must be set")),
+            // R-27: honour --config like `migrate`, with the env override.
+            async {
+                let url = database_url(cli.config.as_deref())?;
+                let pool = picroom_admin::user::open_pool(&url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("open pool: {e}"))?;
+                picroom_admin::audit_tail(&pool, follow, actor)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
             }
+            .await
         }
         Command::Admin(AdminCmd::Config(cmd)) => match cmd {
             ConfigCmd::Print => picroom_admin::config_print().map_err(|e| anyhow::anyhow!("{e}")),
@@ -192,20 +203,34 @@ async fn main() -> ExitCode {
                 picroom_admin::config_validate().map_err(|e| anyhow::anyhow!("{e}"))
             }
         },
-        Command::Admin(AdminCmd::StorageTest { policy: _ }) => {
-            let cfg = picroom_infra::load_config_from(cli.config.as_deref())
-                .map_err(|e| anyhow::anyhow!("config: {e}"));
-            match cfg {
-                Ok(c) => {
-                    let driver = crate::app::build_storage(&c)
+        Command::Admin(AdminCmd::StorageTest { policy }) => {
+            // R-27: --policy selects what is tested. `local` forces the
+            // filesystem driver; anything else is the S3/MinIO policy from
+            // the environment and must be configured (a missing or
+            // mis-credentialed policy fails the round-trip instead of
+            // silently testing the default).
+            let resolve = || -> anyhow::Result<Arc<dyn picroom_storage::Storage>> {
+                if policy == "local" {
+                    let root = std::env::current_dir().unwrap_or_default().join("data");
+                    std::fs::create_dir_all(&root).ok();
+                    Ok(Arc::new(LocalDriver::new(root, "/i")))
+                } else {
+                    let s3_cfg = crate::app::parse_s3_config_from_env().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "storage policy '{policy}' is not configured: no S3/MinIO environment                              (S3_ENDPOINT / S3_BUCKET / credentials). Use --policy local for the                              filesystem driver."
+                        )
+                    })?;
+                    let driver = S3Driver::new(s3_cfg)
+                        .map_err(|e| anyhow::anyhow!("S3 driver init: {e}"))?;
+                    Ok(Arc::new(driver))
+                }
+            };
+            match resolve() {
+                Ok(driver) => {
+                    println!("testing storage policy '{policy}'...");
+                    picroom_admin::storage_test(driver.as_ref())
                         .await
-                        .map_err(|e| anyhow::anyhow!("{e}"));
-                    match driver {
-                        Ok(d) => picroom_admin::storage_test(d.as_ref())
-                            .await
-                            .map_err(|e| anyhow::anyhow!("{e}")),
-                        Err(e) => Err(e),
-                    }
+                        .map_err(|e| anyhow::anyhow!("{e}"))
                 }
                 Err(e) => Err(e),
             }
@@ -218,6 +243,18 @@ async fn main() -> ExitCode {
             tracing::error!("{e:?}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Resolves the database URL for admin subcommands: `PICROOM_DATABASE__URL`
+/// wins; otherwise the `--config`-loaded configuration (R-27).
+fn database_url(config_path: Option<&std::path::Path>) -> anyhow::Result<String> {
+    if let Ok(url) = std::env::var("PICROOM_DATABASE__URL") {
+        Ok(url)
+    } else {
+        let cfg = picroom_infra::load_config_from(config_path)
+            .map_err(|e| anyhow::anyhow!("config: {e}"))?;
+        Ok(cfg.database.url)
     }
 }
 
@@ -239,13 +276,22 @@ fn parse_role(s: &str) -> picroom_auth::Role {
     }
 }
 
-async fn run_user_cmd(cmd: picroom_admin::UserCmd) -> anyhow::Result<()> {
+async fn run_user_cmd(
+    cmd: picroom_admin::UserCmd,
+    config_path: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
     use picroom_admin::user::{
         user_create_pg, user_create_sqlite, user_disable_pg, user_disable_sqlite, user_list_pg,
         user_list_sqlite, user_set_role_pg, user_set_role_sqlite,
     };
-    let url = std::env::var("PICROOM_DATABASE__URL")
-        .map_err(|_| anyhow::anyhow!("PICROOM_DATABASE__URL must be set"))?;
+    // R-27: honour --config like `migrate`; the env var still wins.
+    let url = if let Ok(url) = std::env::var("PICROOM_DATABASE__URL") {
+        url
+    } else {
+        let cfg = picroom_infra::load_config_from(config_path)
+            .map_err(|e| anyhow::anyhow!("config: {e}"))?;
+        cfg.database.url
+    };
     let pool = picroom_admin::user::open_pool(&url).await?;
     match pool {
         picroom_admin::user::AnyPool::Pg(p) => match cmd {
@@ -312,13 +358,21 @@ async fn run_user_cmd(cmd: picroom_admin::UserCmd) -> anyhow::Result<()> {
     }
 }
 
-async fn run_team_cmd(cmd: picroom_admin::TeamCmd) -> anyhow::Result<()> {
+async fn run_team_cmd(
+    cmd: picroom_admin::TeamCmd,
+    config_path: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
     use picroom_admin::team::{
         team_add_member_pg, team_add_member_sqlite, team_create_pg, team_create_sqlite,
         team_list_pg, team_list_sqlite,
     };
-    let url = std::env::var("PICROOM_DATABASE__URL")
-        .map_err(|_| anyhow::anyhow!("PICROOM_DATABASE__URL must be set"))?;
+    let url = if let Ok(url) = std::env::var("PICROOM_DATABASE__URL") {
+        url
+    } else {
+        let cfg = picroom_infra::load_config_from(config_path)
+            .map_err(|e| anyhow::anyhow!("config: {e}"))?;
+        cfg.database.url
+    };
     let pool = picroom_admin::user::open_pool(&url).await?;
     match pool {
         picroom_admin::user::AnyPool::Pg(p) => match cmd {

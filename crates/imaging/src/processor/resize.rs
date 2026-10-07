@@ -60,10 +60,12 @@ impl Processor for ResizeProcessor {
             let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
             let (new_w, new_h) = if w >= h {
                 let scale = max as f32 / w as f32;
-                (max, ((h as f32) * scale).round() as u32)
+                // Extreme aspect ratios can round to zero, which panics
+                // inside resize_exact (R-29) — clamp to at least 1 px.
+                (max, (((h as f32) * scale).round() as u32).max(1))
             } else {
                 let scale = max as f32 / h as f32;
-                (((w as f32) * scale).round() as u32, max)
+                ((((w as f32) * scale).round() as u32).max(1), max)
             };
 
             let resized = img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3);

@@ -136,7 +136,7 @@ impl Resource {
 
     /// The team whose membership role applies to this resource: for a `Team`
     /// resource the team itself, otherwise the resource's team scope.
-    fn team_scope(&self) -> Option<uuid::Uuid> {
+    const fn team_scope(&self) -> Option<uuid::Uuid> {
         match self.resource_type {
             ResourceType::Team => Some(self.id),
             _ => self.team_id,
@@ -657,7 +657,7 @@ mod tests {
 
     /// Task 1.1: the canonical permission vocabulary is `picroom-domain`'s;
     /// this crate re-exports it. Both serde directions must agree on the
-    /// snake_case wire format.
+    /// `snake_case` wire format.
     #[test]
     fn reexported_permission_types_serde_roundtrip() {
         let p = Permission::new(ResourceType::StoragePolicy, PermissionAction::Admin);

@@ -128,13 +128,16 @@ impl StorageWriter for LocalDriver {
                 .map_err(|e| StorageError::Backend(format!("mkdir {}: {e}", parent.display())))?;
         }
 
-        // Atomic write: temp file + rename.
+        // Atomic write: temp file + rename. The name embeds a unique suffix
+        // (R-30) so concurrent puts of the same key never share a temp file,
+        // and leftovers cannot collide with real objects.
         let mut tmp = path.clone();
         let tmp_name = format!(
-            ".{}.tmp",
+            ".{}.{}.tmp",
             path.file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("picroom")
+                .unwrap_or("picroom"),
+            uuid::Uuid::now_v7().simple()
         );
         tmp.set_file_name(tmp_name);
 
@@ -220,11 +223,13 @@ async fn collect_recursive(
                 continue;
             }
             let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
-            // Skip temp files (atomic-write leftovers).
+            // Skip temp files (atomic-write leftovers): dot-prefixed names
+            // ending in `.tmp`. The old filter compared the whole name to
+            // the literal ".tmp" and never matched anything (R-30).
             if rel
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with('.') && n.eq_ignore_ascii_case(".tmp"))
+                .is_some_and(|n| n.starts_with('.') && n.ends_with(".tmp"))
             {
                 continue;
             }

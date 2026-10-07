@@ -25,7 +25,10 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// Default MIME prefix required for upload.
-const ALLOWED_MIME_PREFIXES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
+// No GIF: the `image` crate is built without the GIF decoder feature, so a
+// GIF upload used to pass the MIME gate and then die in probe with a 500
+// (R-26). Reject it at the gate with 415 (mapped to 400/unsupported).
+const ALLOWED_MIME_PREFIXES: &[&str] = &["image/jpeg", "image/png", "image/webp"];
 
 /// Default thumbnail sizes.
 const DEFAULT_THUMBNAIL_SIZES: &[u32] = &[200, 400, 800];
@@ -78,8 +81,8 @@ impl UploadService {
     }
 
     /// Sets the authorization coordinator used to enforce `Image/Create`.
-    pub fn with_authz(mut self, authz: Arc<AuthzService>) -> Self {
-        self.authz = (*authz).clone();
+    pub fn with_authz(mut self, authz: &AuthzService) -> Self {
+        self.authz = authz.clone();
         self
     }
 

@@ -949,6 +949,7 @@ pub struct AclGrant {
 
 impl AclGrant {
     /// Builds an allow grant.
+    #[allow(clippy::missing_const_for_fn)] // enum construction; const triggers no benefit
     pub fn allow(
         subject: picroom_auth::AclSubject,
         action: picroom_auth::PermissionAction,
@@ -961,6 +962,7 @@ impl AclGrant {
     }
 
     /// Builds a deny grant.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn deny(subject: picroom_auth::AclSubject, action: picroom_auth::PermissionAction) -> Self {
         Self {
             subject,
@@ -1009,7 +1011,7 @@ fn action_from_str(s: &str) -> Option<picroom_auth::PermissionAction> {
 }
 
 /// Splits a subject into its `(subject_type, subject_id)` columns.
-fn subject_to_cols(s: picroom_auth::AclSubject) -> (&'static str, Uuid) {
+const fn subject_to_cols(s: picroom_auth::AclSubject) -> (&'static str, Uuid) {
     match s {
         picroom_auth::AclSubject::User(id) => ("user", id),
         picroom_auth::AclSubject::Team(id) => ("team", id),
@@ -1043,11 +1045,11 @@ fn grant_to_cols(resource_type: &str, resource_id: Uuid, g: &AclGrant) -> GrantC
     )
 }
 
-fn grant_from_cols(st: String, sid: Uuid, permission: String, effect: String) -> Option<AclGrant> {
+fn grant_from_cols(st: &str, sid: Uuid, permission: &str, effect: &str) -> Option<AclGrant> {
     Some(AclGrant {
-        subject: subject_from_cols(&st, sid)?,
-        action: action_from_str(&permission)?,
-        effect: match effect.as_str() {
+        subject: subject_from_cols(st, sid)?,
+        action: action_from_str(permission)?,
+        effect: match effect {
             "allow" => picroom_auth::AclEffect::Allow,
             "deny" => picroom_auth::AclEffect::Deny,
             _ => return None,
@@ -1087,7 +1089,7 @@ impl ResourceAclRepository for PgResourceAclRepository {
         let mut out = Vec::with_capacity(rows.len());
         for (st, sid, permission, effect) in rows {
             out.push(
-                grant_from_cols(st, sid, permission, effect)
+                grant_from_cols(&st, sid, &permission, &effect)
                     .ok_or_else(|| ServiceError::Internal("unknown acl row value".into()))?,
             );
         }
@@ -1192,7 +1194,7 @@ impl ResourceAclRepository for SqliteResourceAclRepository {
             let sid = Uuid::parse_str(&sid_text)
                 .map_err(|e| ServiceError::Internal(format!("acl subject id: {e}")))?;
             out.push(
-                grant_from_cols(st, sid, permission, effect)
+                grant_from_cols(&st, sid, &permission, &effect)
                     .ok_or_else(|| ServiceError::Internal("unknown acl row value".into()))?,
             );
         }

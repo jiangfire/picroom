@@ -1,45 +1,31 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Picroom Contributors
 
-//! Thumbnail processor — generates multiple smaller variants.
+//! Thumbnail generation — the single implementation backing the worker's
+//! `GenerateThumbnail` jobs (Q-7).
 
-use super::{Processor, ProcessorError, ProcessorOutput};
-use crate::PipelineContext;
-use async_trait::async_trait;
 use bytes::Bytes;
+use image::DynamicImage;
 
-/// Generates thumbnails at the configured sizes.
-#[derive(Debug, Clone)]
-pub struct ThumbnailProcessor {
-    sizes: Vec<u32>,
-}
-
-impl ThumbnailProcessor {
-    /// Creates a thumbnail processor with the given sizes (e.g. `[200, 400, 800]`).
-    pub const fn new(sizes: Vec<u32>) -> Self {
-        Self { sizes }
-    }
-
-    /// Returns the configured sizes.
-    pub fn sizes(&self) -> &[u32] {
-        &self.sizes
-    }
-}
-
-#[async_trait]
-impl Processor for ThumbnailProcessor {
-    fn name(&self) -> &'static str {
-        "thumbnail"
-    }
-
-    async fn process(
-        &self,
-        _ctx: &PipelineContext,
-        input: Bytes,
-    ) -> Result<ProcessorOutput, ProcessorError> {
-        // Placeholder: real implementation runs `ResizeProcessor` per size.
-        Ok(ProcessorOutput::Bytes(input))
-    }
+/// Renders a JPEG thumbnail whose longest side is at most `size`
+/// (shrink-only: smaller sources are never upscaled).
+pub fn encode_thumbnail(img: &DynamicImage, size: u32, jpeg_quality: u8) -> Result<Bytes, String> {
+    let resized = {
+        let longest = img.width().max(img.height());
+        if longest <= size {
+            img.clone()
+        } else {
+            img.resize(size, size, image::imageops::FilterType::Triangle)
+        }
+    };
+    let mut out = Vec::new();
+    let encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, jpeg_quality.clamp(1, 100));
+    resized
+        .to_rgb8()
+        .write_with_encoder(encoder)
+        .map_err(|e| e.to_string())?;
+    Ok(Bytes::from(out))
 }
 
 #[cfg(test)]
@@ -47,8 +33,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_stores_sizes() {
-        let p = ThumbnailProcessor::new(vec![200, 400, 800]);
-        assert_eq!(p.sizes(), &[200, 400, 800]);
+    fn bounds_longest_side_and_never_upscales() {
+        let img = image::RgbImage::from_fn(100, 80, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let out = encode_thumbnail(&DynamicImage::ImageRgb8(img), 32, 85).unwrap();
+        let decoded = image::load_from_memory(&out).unwrap();
+        assert_eq!(decoded.width().max(decoded.height()), 32);
+
+        // Smaller source is passed through, not upscaled.
+        let small = image::RgbImage::from_fn(10, 8, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let out = encode_thumbnail(&DynamicImage::ImageRgb8(small), 32, 85).unwrap();
+        let decoded = image::load_from_memory(&out).unwrap();
+        assert_eq!(decoded.width(), 10);
     }
 }

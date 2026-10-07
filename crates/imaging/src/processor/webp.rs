@@ -1,48 +1,21 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Picroom Contributors
 
-//! WebP encoder.
+//! WebP encoder — the single implementation backing the worker's
+//! `EncodeWebp` jobs (Q-7). The `image` crate's WebP encoder is
+//! lossless-only, so output is lossless WebP regardless of any quality knob.
 
-use super::{Processor, ProcessorError, ProcessorOutput};
-use crate::PipelineContext;
-use async_trait::async_trait;
 use bytes::Bytes;
+use image::DynamicImage;
 
-/// Encodes images to WebP.
-#[derive(Debug, Clone)]
-pub struct WebpProcessor {
-    quality: u8,
-}
-
-impl WebpProcessor {
-    /// Creates a WebP processor with the given quality (1–100).
-    pub const fn new(quality: u8) -> Self {
-        Self { quality }
-    }
-
-    /// Returns the configured quality.
-    pub const fn quality(&self) -> u8 {
-        self.quality
-    }
-}
-
-#[async_trait]
-impl Processor for WebpProcessor {
-    fn name(&self) -> &'static str {
-        "webp"
-    }
-
-    async fn process(
-        &self,
-        _ctx: &PipelineContext,
-        input: Bytes,
-    ) -> Result<ProcessorOutput, ProcessorError> {
-        // Placeholder: real implementation uses `image::codecs::webp`.
-        Ok(ProcessorOutput::Variant {
-            kind: "webp".to_string(),
-            bytes: input,
-        })
-    }
+/// Encodes a decoded image to (lossless) WebP.
+pub fn encode_webp(img: &DynamicImage) -> Result<Bytes, String> {
+    let mut out = Vec::new();
+    let mut cur = std::io::Cursor::new(&mut out);
+    img.to_rgb8()
+        .write_to(&mut cur, image::ImageFormat::WebP)
+        .map_err(|e| e.to_string())?;
+    Ok(Bytes::from(out))
 }
 
 #[cfg(test)]
@@ -50,8 +23,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_stores_quality() {
-        let p = WebpProcessor::new(80);
-        assert_eq!(p.quality(), 80);
+    fn encodes_valid_webp() {
+        let img = image::RgbImage::from_fn(24, 16, |x, y| image::Rgb([x as u8, y as u8, 64]));
+        let out = encode_webp(&DynamicImage::ImageRgb8(img)).unwrap();
+        assert!(out.starts_with(b"RIFF"));
+        assert_eq!(&out[8..12], b"WEBP");
     }
 }
