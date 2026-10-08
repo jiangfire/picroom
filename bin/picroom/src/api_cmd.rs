@@ -166,6 +166,7 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         oidc_providers: Arc::new(cfg.auth.oidc.providers.clone()),
         oidc_admin_emails: Arc::new(cfg.auth.oidc.admin_emails.clone().into_iter().collect()),
         cookie_secure: cfg.auth.oidc.secure_cookies,
+        require_sessions: cfg.auth.require_sessions,
         session_repo,
         acl_repo,
         authz,

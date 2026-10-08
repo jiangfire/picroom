@@ -52,54 +52,67 @@ impl<Q: JobQueue + 'static, D: DlqSink + 'static> WorkerPool<Q, D> {
                     }
                     match queue.dequeue().await {
                         Ok(Some(job)) => {
-                            // A panicking handler must kill the *job*, not
-                            // the slot: catch the unwind and route it through
-                            // the normal failure path (retry/DLQ). Without
-                            // this, one bad job permanently kills the slot
-                            // and `run_until` spins on an empty JoinSet.
+                            // A panicking handler must kill the *job*, not the
+                            // slot: catch the unwind and convert it to a normal
+                            // failure, then route the failure through the same
+                            // protected complete/fail path (a panic inside
+                            // complete()/fail()/DLQ would otherwise kill the
+                            // slot too — R-11).
+                            let handler = handler.clone();
                             let r = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
                                 handler(job.clone()),
                             ))
                             .await
                             .unwrap_or_else(|panic| Err(format!("handler panicked: {panic:?}")));
-                            match r {
-                                Ok(result) => {
-                                    if let Err(e) = queue.complete(job.id, &result).await {
-                                        tracing::warn!("complete failed: {e}");
+                            let queue = queue.clone();
+                            let dlq = dlq.clone();
+                            let policy = policy.clone();
+                            let job_id = job.id;
+                            let routed = futures::FutureExt::catch_unwind(
+                                std::panic::AssertUnwindSafe(async move {
+                                    match r {
+                                        Ok(result) => {
+                                            if let Err(e) = queue.complete(job.id, &result).await {
+                                                tracing::warn!("complete failed: {e}");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            // `dequeue` already incremented
+                                            // `attempts`, so `job.attempts` IS
+                                            // the number of the attempt that
+                                            // just failed.
+                                            let exhausted = job.attempts >= policy.max_attempts;
+                                            if exhausted {
+                                                let _ = dlq
+                                                    .push(DlqEntry {
+                                                        job_id: job.id,
+                                                        error: e.clone(),
+                                                        attempts: job.attempts,
+                                                        moved_at: OffsetDateTime::now_utc(),
+                                                    })
+                                                    .await;
+                                            }
+                                            let _ = queue.fail(job.id, &e).await;
+                                            // Back off before the next dequeue
+                                            // so a failing job is not retried
+                                            // instantly. Skipped when the job is
+                                            // exhausted (no retry pending).
+                                            if !exhausted {
+                                                let delay = std::time::Duration::from_secs(
+                                                    policy.delay_secs(job.attempts),
+                                                );
+                                                tokio::time::sleep(delay).await;
+                                            }
+                                        }
                                     }
-                                }
-                                Err(e) => {
-                                    // `dequeue` already incremented `attempts`,
-                                    // so `job.attempts` IS the number of the
-                                    // attempt that just failed. Adding 1 more
-                                    // DLQ'd the job one attempt early while
-                                    // the DB still retried it — duplicate DLQ
-                                    // entries (R-31).
-                                    let exhausted = job.attempts >= policy.max_attempts;
-                                    if exhausted {
-                                        let _ = dlq
-                                            .push(DlqEntry {
-                                                job_id: job.id,
-                                                error: e.clone(),
-                                                attempts: job.attempts,
-                                                moved_at: OffsetDateTime::now_utc(),
-                                            })
-                                            .await;
-                                    }
-                                    let _ = queue.fail(job.id, &e).await;
-                                    // Back off before the next dequeue so a
-                                    // failing job is not retried instantly.
-                                    // `delay_secs` is indexed by the attempt
-                                    // that just failed (dequeue already
-                                    // incremented `attempts`). Skipped when the
-                                    // job is exhausted (no retry pending).
-                                    if !exhausted {
-                                        let delay = std::time::Duration::from_secs(
-                                            policy.delay_secs(job.attempts),
-                                        );
-                                        tokio::time::sleep(delay).await;
-                                    }
-                                }
+                                }),
+                            )
+                            .await;
+                            if routed.is_err() {
+                                tracing::error!(
+                                    job_id = %job_id,
+                                    "job completion panicked (complete/fail path); slot survives"
+                                );
                             }
                         }
                         Ok(None) => {
@@ -169,8 +182,11 @@ pub async fn run_until<F, Fut, Q, D>(
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             continue;
         }
-        tokio::select! {
-            _ = set.join_next() => {}
+        // A JoinError here means the slot task itself died (e.g. a panic that
+        // escaped the per-job guard) — log it loudly instead of silently
+        // shrinking the pool.
+        if let Some(Err(err)) = set.join_next().await {
+            tracing::error!("worker slot task died: {err}");
         }
     }
 

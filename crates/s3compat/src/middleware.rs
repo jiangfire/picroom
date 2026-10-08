@@ -106,7 +106,16 @@ pub(crate) fn verify_request(
         .get("x-amz-content-sha256")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("UNSIGNED-PAYLOAD");
-    if payload_hash != "UNSIGNED-PAYLOAD" && !payload_hash.starts_with("STREAMING") {
+    if payload_hash == "UNSIGNED-PAYLOAD" {
+        // no declared hash — the signature simply does not cover the body.
+    } else if payload_hash.starts_with("STREAMING") {
+        // aws-chunked framing is not decoded here: accepting it would store
+        // chunk signatures as object bytes and verify nothing. Fail loudly so
+        // clients fall back to a signed single PUT (ADR-0004's contract).
+        return Err(S3Error::BadRequest(
+            "streaming-signed uploads are not supported; send a single PUT with x-amz-content-sha256 of the payload".to_string(),
+        ));
+    } else {
         let actual = sha256_hex(body);
         if !str_eq_ct(&actual, payload_hash) {
             return Err(S3Error::SignatureMismatch);
@@ -138,41 +147,18 @@ fn str_eq_ct(a: &str, b: &str) -> bool {
     a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
-/// AWS canonical URI: percent-encode every segment except unreserved
-/// characters and the path separator. Raw `req.uri().path()` used to be
-/// signed as-is, so an unencoded key could verify differently than AWS
-/// clients sign it.
+/// AWS canonical URI for `S3`: the raw request path exactly as it arrived on
+/// the wire — `http::Uri::path` preserves the client's percent-encoding, and
+/// `SigV4` (S3 flavor) does not normalize paths (single encoding, empty
+/// segments preserved), so the canonical form IS the wire path.
+///
+/// (An earlier version re-encoded the already-encoded path, turning `%20`
+/// into `%2520` and failing every key containing an encoded character.)
 fn canonical_uri(path: &str) -> String {
     if path.is_empty() {
-        return "/".to_string();
-    }
-    let mut out = String::with_capacity(path.len() + 8);
-    for segment in path.split('/') {
-        if segment.is_empty() {
-            // leading (or duplicated) separator — the slash is emitted with
-            // the next non-empty segment.
-            continue;
-        }
-        out.push('/');
-        aws_uri_encode(segment, &mut out);
-    }
-    if path.ends_with('/') {
-        out.push('/');
-    }
-    out
-}
-
-/// Appends `s` to `out` with AWS-style URI encoding: unreserved characters
-/// (`A-Z a-z 0-9 - _ . ~`) and `/` pass through (the caller splits on `/`),
-/// everything else becomes `%XX`.
-fn aws_uri_encode(s: &str, out: &mut String) {
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
+        "/".to_string()
+    } else {
+        path.to_string()
     }
 }
 
@@ -181,13 +167,18 @@ fn canonical_query_string(query: Option<&str>) -> String {
     let Some(q) = query else {
         return String::new();
     };
-    let mut pairs: Vec<(&str, &str)> = q.split('&').filter_map(|p| p.split_once('=')).collect();
+    // A bare parameter (`POST /key?uploads`) signs as `name=` per SigV4 —
+    // dropping it made the multipart-initiate 501 unreachable (403 first).
+    let mut pairs: Vec<String> = q
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|p| match p.split_once('=') {
+            Some((k, v)) => format!("{k}={v}"),
+            None => format!("{p}="),
+        })
+        .collect();
     pairs.sort_unstable();
-    pairs
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&")
+    pairs.join("&")
 }
 
 /// Builds the canonical headers block: `name:value\n` for each signed header.
@@ -202,14 +193,22 @@ fn canonical_headers(
     let mut out = String::new();
     for name in signed {
         let lower = name.to_lowercase();
-        let Some(v) = headers.get(&lower).and_then(|v| v.to_str().ok()) else {
+        if !headers.contains_key(&lower) {
             return Err(S3Error::BadRequest(format!(
                 "signed header '{lower}' missing from request"
             )));
-        };
+        }
+        // SigV4 canonicalization: trim surrounding AND collapse sequential
+        // inner spaces; repeated headers join with a comma.
+        let values: Vec<String> = headers
+            .get_all(&lower)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|v| v.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
         out.push_str(&lower);
         out.push(':');
-        out.push_str(v.trim());
+        out.push_str(&values.join(","));
         out.push('\n');
     }
     Ok(out)
@@ -484,9 +483,48 @@ mod tests {
     }
 
     #[test]
-    fn canonical_uri_encodes_reserved_characters() {
-        assert_eq!(canonical_uri("/b/a b.png"), "/b/a%20b.png");
-        assert_eq!(canonical_uri("/b/k(1).png"), "/b/k%281%29.png");
+    fn canonical_uri_is_the_wire_path_unmodified() {
+        // S3 SigV4 does NOT normalize the path: the canonical URI is the raw
+        // (already percent-encoded) path as the client sent it. Re-encoding
+        // turned %20 into %2520 and broke every encoded key.
+        assert_eq!(canonical_uri("/b/a%20b.png"), "/b/a%20b.png");
+        assert_eq!(canonical_uri("/b/k(1).png"), "/b/k(1).png");
         assert_eq!(canonical_uri("/b/plain.png"), "/b/plain.png");
+        assert_eq!(canonical_uri("/"), "/");
+        assert_eq!(canonical_uri(""), "/");
+        // empty segments are preserved (key `a//b` is legal)
+        assert_eq!(canonical_uri("/b//c.png"), "/b//c.png");
+    }
+
+    #[test]
+    fn bare_query_parameter_signs_as_name_equals() {
+        assert_eq!(canonical_query_string(Some("uploads")), "uploads=");
+        assert_eq!(
+            canonical_query_string(Some("uploads&prefix=x")),
+            "prefix=x&uploads="
+        );
+        assert_eq!(canonical_query_string(Some("a=1&b=2")), "a=1&b=2");
+    }
+
+    #[test]
+    fn streaming_payload_is_rejected_not_skipped() {
+        let c = creds();
+        let (parts, body) = signed_request(
+            &c,
+            "PUT",
+            "/b/k.bin",
+            None,
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
+            &now_date().0,
+            &now_date().1,
+            &["host", "x-amz-date"],
+            b"framed-chunks",
+        );
+        // The old behavior skipped the body check for STREAMING-*, storing
+        // aws-chunked framing as object bytes and verifying nothing.
+        assert!(matches!(
+            verify_request(&parts, &body, &c),
+            Err(S3Error::BadRequest(_))
+        ));
     }
 }

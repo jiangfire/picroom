@@ -3,14 +3,13 @@
 
 //! Job processor: turns an `ImageJob` into one or more stored variants.
 
-use crate::dlq::{DlqEntry, DlqSink};
+use crate::dlq::DlqSink;
 use crate::job::{Job, JobKind, JobResult};
 use async_trait::async_trait;
 use bytes::Bytes;
 use picroom_domain::{Image, ImageId, StorageKey};
 use picroom_storage::Storage;
 use std::sync::Arc;
-use time::OffsetDateTime;
 
 /// Variant repository — persists variant metadata to DB.
 #[async_trait]
@@ -152,9 +151,15 @@ async fn encode_variant(
 
     // Decode for re-encode, then bound the size by `[pipeline].max_dimension`
     // (aspect-preserving) so a 12000 px upload no longer encodes at full size.
+    // Thumbnail jobs skip the bound: their output must match the `size` the
+    // `image_variants` row records, which can be smaller than max_dimension.
     let decoded =
         image::load_from_memory(&original).map_err(|e| format!("decode original: {e}"))?;
-    let decoded = bounded(decoded, deps.pipeline.max_dimension);
+    let decoded = if size.is_some() {
+        decoded
+    } else {
+        bounded(decoded, deps.pipeline.max_dimension)
+    };
 
     let bytes = tokio::task::spawn_blocking(move || encoder(&decoded))
         .await
@@ -218,22 +223,13 @@ fn bounded(img: image::DynamicImage, max_dimension: u32) -> image::DynamicImage 
     )
 }
 
-/// Helper: build a `DlqEntry` for a failed job.
-pub fn make_dlq_entry(job: &Job, error: String) -> DlqEntry {
-    DlqEntry {
-        job_id: job.id,
-        error,
-        attempts: job.attempts,
-        moved_at: OffsetDateTime::now_utc(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dlq::InMemoryDlq;
     use picroom_storage::driver::LocalDriver;
     use std::path::PathBuf;
+    use time::OffsetDateTime;
 
     #[test]
     fn variant_key_uses_id_and_kind() {
@@ -444,7 +440,9 @@ mod tests {
         );
     }
 
-    /// R-10: `max_dimension` bounds a large upload before encoding.
+    /// R-10: `max_dimension` bounds avif/webp variants before encoding.
+    /// Thumbnail jobs are exempt — their output must match the size the
+    /// `image_variants` row records.
     #[tokio::test]
     async fn max_dimension_bounds_encoded_variants() {
         let (img, storage) = test_image(png_bytes());
@@ -470,7 +468,7 @@ mod tests {
         let job = Job {
             id: uuid::Uuid::now_v7(),
             image_id: img.id,
-            kind: JobKind::GenerateThumbnail { size: 100 },
+            kind: JobKind::EncodeWebp,
             attempts: 0,
             enqueued_at: OffsetDateTime::now_utc(),
         };
@@ -482,6 +480,50 @@ mod tests {
                     "variant must be bounded by max_dimension, got {}x{}",
                     decoded.width(),
                     decoded.height()
+                );
+            }
+            JobResult::Skipped => panic!("expected variant"),
+        }
+    }
+
+    /// Thumbnails are exempt from `max_dimension`: the stored row records the
+    /// requested size, so the bytes must honor it (shrink-only vs source).
+    #[tokio::test]
+    async fn thumbnail_ignores_max_dimension() {
+        let (img, storage) = test_image(png_bytes());
+        let deps = ProcessorDeps {
+            image_lookup: {
+                struct L(Image);
+                #[async_trait]
+                impl ImageLookup for L {
+                    async fn lookup(&self, _id: ImageId) -> Result<Image, String> {
+                        Ok(self.0.clone())
+                    }
+                }
+                Arc::new(L(img.clone()))
+            },
+            storage,
+            dlq: None,
+            variant_repo: None,
+            pipeline: PipelineSettings {
+                max_dimension: 8,
+                ..Default::default()
+            },
+        };
+        let job = Job {
+            id: uuid::Uuid::now_v7(),
+            image_id: img.id,
+            kind: JobKind::GenerateThumbnail { size: 50 },
+            attempts: 0,
+            enqueued_at: OffsetDateTime::now_utc(),
+        };
+        match ImageProcessor::process(&deps, job).await.unwrap() {
+            JobResult::Variant { bytes, .. } => {
+                let decoded = image::load_from_memory(&bytes.unwrap()).unwrap();
+                assert_eq!(
+                    decoded.width().max(decoded.height()),
+                    50,
+                    "thumbnail must honor its requested size despite max_dimension"
                 );
             }
             JobResult::Skipped => panic!("expected variant"),

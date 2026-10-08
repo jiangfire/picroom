@@ -72,9 +72,15 @@ fn content_type_of(key: &str) -> &'static str {
 pub async fn get_object<S: S3State>(
     State(state): State<Arc<S>>,
     Path((bucket, key)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
         return failure;
+    }
+    // ListParts (`GET …?uploadId=U`) is not supported either — answer 501
+    // instead of serving whole-object bytes.
+    if let Some(rejection) = multipart_rejection(query.as_deref()) {
+        return rejection;
     }
     let storage_key = match StorageKey::parse(&key) {
         Ok(k) => k,
@@ -131,6 +137,7 @@ pub async fn put_object<S: S3State>(
 pub async fn head_object<S: S3State>(
     State(state): State<Arc<S>>,
     Path((bucket, key)): Path<(String, String)>,
+    RawQuery(_query): RawQuery,
 ) -> Response {
     if let Some(failure) = bucket_guard(state.as_ref(), &bucket) {
         return failure;
@@ -241,7 +248,7 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let resp = get_object(State(st), Path(("bucket".into(), key))).await;
+        let resp = get_object(State(st), Path(("bucket".into(), key)), RawQuery(None)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_string(resp).await, "hello");
     }
@@ -249,7 +256,12 @@ mod tests {
     #[tokio::test]
     async fn get_missing_returns_not_found() {
         let st = state();
-        let resp = get_object(State(st), Path(("bucket".into(), "nope.png".into()))).await;
+        let resp = get_object(
+            State(st),
+            Path(("bucket".into(), "nope.png".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -259,6 +271,7 @@ mod tests {
         let resp = get_object(
             State(st),
             Path(("bucket".into(), "/leadingslash.png".into())),
+            RawQuery(None),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -268,7 +281,12 @@ mod tests {
     async fn get_internal_error_on_storage_failure() {
         let st = state();
         st.set_fail(true);
-        let resp = get_object(State(st), Path(("bucket".into(), "x.png".into()))).await;
+        let resp = get_object(
+            State(st),
+            Path(("bucket".into(), "x.png".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
@@ -298,14 +316,19 @@ mod tests {
             )
             .await
             .unwrap();
-        let resp = head_object(State(st), Path(("bucket".into(), key))).await;
+        let resp = head_object(State(st), Path(("bucket".into(), key)), RawQuery(None)).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn head_missing_returns_not_found() {
         let st = state();
-        let resp = head_object(State(st), Path(("bucket".into(), "missing.jpg".into()))).await;
+        let resp = head_object(
+            State(st),
+            Path(("bucket".into(), "missing.jpg".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -313,7 +336,12 @@ mod tests {
     async fn head_internal_error_on_storage_failure() {
         let st = state();
         st.set_fail(true);
-        let resp = head_object(State(st), Path(("bucket".into(), "x.jpg".into()))).await;
+        let resp = head_object(
+            State(st),
+            Path(("bucket".into(), "x.jpg".into())),
+            RawQuery(None),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
@@ -406,7 +434,7 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
-        let resp = get_object(State(st), Path(("bucket".into(), key))).await;
+        let resp = get_object(State(st), Path(("bucket".into(), key)), RawQuery(None)).await;
         assert_eq!(
             resp.status(),
             StatusCode::OK,

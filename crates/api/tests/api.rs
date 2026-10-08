@@ -794,13 +794,15 @@ async fn image_link_forbids_viewer_accessing_others_image() {
 }
 
 #[tokio::test]
-async fn image_link_allows_viewer_accessing_others_image() {
+async fn image_link_denies_viewer_accessing_others_personal_image() {
     let img_id = uuid::Uuid::now_v7();
     // Image owned by someone else.
     let img = sample_image(img_id, UserId(uuid::Uuid::now_v7()), "img/viewer.bin");
     let app = link_app(vec![img], Some("https://cdn.example.com"));
 
-    // Viewer-scoped token (has Image/Read permission) may read others' links.
+    // Personal images are owner-only (spec §10.2). A viewer must not learn
+    // another user's storage key via /link — that key unlocks the public
+    // /i/{key} route, so allowing link here would defeat `get`'s 403.
     let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);
     let token = jwt
         .issue_with_scopes(uuid::Uuid::now_v7(), &["viewer".to_string()])
@@ -816,13 +818,7 @@ async fn image_link_allows_viewer_accessing_others_image() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        json["public_url"],
-        "https://cdn.example.com/i/img/viewer.bin"
-    );
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 // ---------------------------------------------------------------------------

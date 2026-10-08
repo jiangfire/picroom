@@ -115,7 +115,7 @@ All backend changes reuse the existing stack (axum, sqlx, the `Storage` trait,
 
 1. Login page collects `{ server_url, email, password }`.
 2. Frontend POSTs `/api/v1/auth/login` → receives `{ access_token }`.
-3. Rust stores `{ server_url, email, token }` in `tauri-plugin-store`
+3. Rust stores `{ server_url, email }` in `tauri-plugin-store`; the token goes to the OS keychain
    (app-data dir, one entry per profile).
 4. A managed `AppState` holds the active profile + a long-lived `reqwest::Client`.
 5. Every request injects `Authorization: Bearer <token>`.

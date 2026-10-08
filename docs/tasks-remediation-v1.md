@@ -297,6 +297,8 @@ so no table needs to be created — only `effect` (D-9) and a SQLite mirror (D-1
 ### ✅ Task 3.6: Fix the GIF contract (R-26)
 - Enable the GIF decoder feature or drop `image/gif` from `upload.rs:26`
 - **Tests**: a GIF is either processed or rejected with 415 — never a 500
+- **Resolution note**: dropped from the MIME gate — rejection is a 400
+  ("unsupported content type"), not 415; the "never a 500" guarantee holds
 - **Verify**: `cargo test -p picroom-service`
 
 ### ✅ Task 3.7: Honour CLI flags (R-27)

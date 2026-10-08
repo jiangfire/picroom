@@ -280,8 +280,7 @@ picroom/
 │   │   │   │   ├── local.rs
 │   │   │   │   ├── s3.rs
 │   │   │   │   └── minio.rs         # (oss/cos/qiniu are planned, not yet implemented)
-│   │   │   ├── signing.rs
-│   │   │   ├── contract_test.rs
+│   │   │   ├── │   │   │   ├── contract_test.rs
 │   │   │   └── error.rs
 │   │   └── tests/
 │   ├── imaging/                     # Processor trait + pipeline
@@ -295,16 +294,14 @@ picroom/
 │   │           ├── avif.rs
 │   │           ├── webp.rs
 │   │           ├── thumbnail.rs
-│   │           └── watermark.rs
-│   ├── auth/                        # RBAC, JWT, OIDC, API token
+│   │           └── │   ├── auth/                        # RBAC, JWT, OIDC, API token
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── jwt.rs
 │   │       ├── oidc.rs
 │   │       ├── password.rs          # Argon2id
-│   │       ├── api_token.rs
-│   │       └── rbac.rs
+│   │       ├── │   │       └── rbac.rs
 │   ├── audit/                       # audit log
 │   │   ├── Cargo.toml
 │   │   └── src/

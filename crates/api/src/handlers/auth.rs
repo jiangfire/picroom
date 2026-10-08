@@ -307,9 +307,29 @@ pub async fn oidc_callback(
     }
 
     // 6. Issue a Bearer JWT and redirect to the SPA with it in the fragment.
+    // Bind it to a revocable session exactly like password login (D-6) —
+    // otherwise OIDC tokens would be sid-less and logout / disabling the user
+    // could never revoke them.
+    let sid = match &state.session_repo {
+        Some(sessions) => {
+            let sid = uuid::Uuid::now_v7();
+            let expires_at =
+                time::OffsetDateTime::now_utc() + time::Duration::seconds(state.jwt.ttl_secs());
+            sessions
+                .create(&picroom_service::repo::SessionRow {
+                    id: sid,
+                    user_id: user.id.as_uuid(),
+                    expires_at,
+                })
+                .await
+                .map_err(|e| ApiError::internal(format!("session create: {e}")))?;
+            Some(sid.to_string())
+        }
+        None => None,
+    };
     let token = state
         .jwt
-        .issue_with_scopes(user.id.to_string(), std::slice::from_ref(&user.role))
+        .issue_session(user.id.to_string(), std::slice::from_ref(&user.role), sid)
         .map_err(|e| ApiError::internal(format!("jwt: {e}")))?;
 
     let base = state

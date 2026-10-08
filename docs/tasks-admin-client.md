@@ -75,7 +75,7 @@ testable in a single command. Strike-through = done.
 
 ### ~~Task 2.3: Auth command layer~~ ✅
 - ~~Commands: `login`, `logout`, `get_session`, `list_profiles`, `save_profile`, `set_active_profile`, `remove_profile`~~
-- ~~Token + profile persisted via `tauri-plugin-store`~~
+- ~~Profile persisted via `tauri-plugin-store`; token persisted in the OS keychain (`keyring`)~~
 - **Verify**: `cargo test --manifest-path desktop/src-tauri/Cargo.toml -- commands::auth`
 
 ### ~~Task 2.4: Upload command~~ ✅

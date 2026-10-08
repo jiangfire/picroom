@@ -96,16 +96,15 @@ impl JobQueue for PgJobQueue {
                 FROM jobs
                 WHERE status = 'pending'
                    OR (status = 'running'
-                       AND lease_expires_at IS NOT NULL
-                       AND lease_expires_at < NOW())
+                       AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
                 ORDER BY enqueued_at
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
             UPDATE jobs j
             SET status = 'running', started_at = NOW(), attempts = attempts + 1,
-                lease_expires_at = NOW() + make_interval(secs => $2),
-                claimed_by = $3
+                lease_expires_at = NOW() + make_interval(secs => $1),
+                claimed_by = $2
             FROM next_job
             WHERE j.id = next_job.id
             RETURNING j.id, j.image_id, j.kind, j.payload, j.attempts, j.enqueued_at
@@ -146,13 +145,14 @@ impl JobQueue for PgJobQueue {
         sqlx::query(
             r"
             UPDATE jobs
-            SET status = CASE WHEN attempts >= 5 THEN 'dead' ELSE 'pending' END,
-                last_error = $2, finished_at = NOW(),
+            SET status = CASE WHEN attempts >= $2 THEN 'dead' ELSE 'pending' END,
+                last_error = $3, finished_at = NOW(),
                 lease_expires_at = NULL, claimed_by = NULL
             WHERE id = $1
             ",
         )
         .bind(id.to_string())
+        .bind(crate::retry::MAX_ATTEMPTS as i32)
         .bind(error)
         .execute(&self.pool)
         .await
@@ -221,26 +221,31 @@ impl JobQueue for SqliteJobQueue {
     }
 
     async fn dequeue(&self) -> Result<Option<Job>, JobError> {
+        // Compute both timestamps in Rust and bind them: SQLite constant-folds
+        // date/time functions at prepare time ("now" freezes for the life of
+        // the cached statement), so 'now' + modifier inside the SQL is not
+        // reliable across repeated dequeues.
+        let now = OffsetDateTime::now_utc();
+        let lease_expires_at = now + time::Duration::seconds(self.lease_secs);
         let row: Option<JobRow> = sqlx::query_as::<_, JobRow>(
             r"
             UPDATE jobs
             SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1,
-                lease_expires_at = strftime('%Y-%m-%d %H:%M:%S', 'now', printf('%+d seconds', ?2)),
-                claimed_by = ?3
+                lease_expires_at = ?1, claimed_by = ?2
             WHERE id = (
                 SELECT id FROM jobs
                 WHERE status = 'pending'
                    OR (status = 'running'
-                       AND lease_expires_at IS NOT NULL
-                       AND lease_expires_at < strftime('%Y-%m-%d %H:%M:%S', 'now'))
+                       AND (lease_expires_at IS NULL OR lease_expires_at < ?3))
                 ORDER BY enqueued_at
                 LIMIT 1
             )
             RETURNING id, image_id, kind, payload, attempts, enqueued_at
             ",
         )
-        .bind(self.lease_secs as i32)
+        .bind(lease_expires_at)
         .bind(&self.worker_id)
+        .bind(now)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| JobError::Processing(format!("dequeue: {e}")))?;
@@ -266,9 +271,10 @@ impl JobQueue for SqliteJobQueue {
 
     async fn fail(&self, id: Uuid, error: &str) -> Result<(), JobError> {
         sqlx::query(
-            r"UPDATE jobs SET status = CASE WHEN attempts >= 5 THEN 'dead' ELSE 'pending' END, last_error = ?2, finished_at = CURRENT_TIMESTAMP, lease_expires_at = NULL, claimed_by = NULL WHERE id = ?1",
+            r"UPDATE jobs SET status = CASE WHEN attempts >= ?2 THEN 'dead' ELSE 'pending' END, last_error = ?3, finished_at = CURRENT_TIMESTAMP, lease_expires_at = NULL, claimed_by = NULL WHERE id = ?1",
         )
         .bind(id.to_string())
+        .bind(crate::retry::MAX_ATTEMPTS as i32)
         .bind(error)
         .execute(&self.pool)
         .await

@@ -31,10 +31,16 @@ pub struct RetryPolicy {
     pub strategy: RetryStrategy,
 }
 
+/// The maximum delivery attempts shared by the retry policy and the queue
+/// `fail` SQL — they must agree or the DLQ and the dead-state diverge.
+///
+/// (R-31 class of bug: duplicate DLQ entries / jobs that never reach the DLQ.)
+pub const MAX_ATTEMPTS: u32 = 5;
+
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            max_attempts: 5,
+            max_attempts: MAX_ATTEMPTS,
             initial_delay_secs: 1,
             max_delay_secs: 60,
             strategy: RetryStrategy::Exponential,

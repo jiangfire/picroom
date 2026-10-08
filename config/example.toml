@@ -35,6 +35,11 @@ generate_thumbnail = true
 strip_exif = true
 max_dimension = 8192
 
+[pipeline.quality]
+avif = 60   # AVIF encoder quality (0-100); applied by the worker
+webp = 80   # reserved: WebP encoding is lossless-only, no effect today
+jpeg = 85   # thumbnail JPEG quality (1-100)
+
 [auth]
 allow_signup = false
 password_min_length = 12

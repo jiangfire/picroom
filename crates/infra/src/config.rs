@@ -200,6 +200,11 @@ pub struct AuthConfig {
     pub allow_signup: bool,
     /// Password minimum length.
     pub password_min_length: usize,
+    /// When a session repository is configured, refuse tokens that carry no
+    /// `sid` (D-6 compat window: default `false` lets pre-session tokens live
+    /// for one TTL; flip to `true` to require session-bound tokens only).
+    #[serde(default)]
+    pub require_sessions: bool,
     /// JWT secret.
     pub jwt_secret: String,
     /// JWT issuer.
@@ -258,6 +263,7 @@ impl Default for AuthConfig {
         Self {
             allow_signup: false,
             password_min_length: 12,
+            require_sessions: false,
             jwt_secret: "change-me".to_string(),
             jwt_issuer: "picroom".to_string(),
             jwt_audience: "picroom-api".to_string(),

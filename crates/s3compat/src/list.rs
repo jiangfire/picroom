@@ -3,7 +3,7 @@
 
 //! S3 `ListObjectsV2` handler.
 
-use crate::error::xml_error;
+use crate::error::{xml_error, xml_escape};
 use crate::S3State;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -74,10 +74,16 @@ pub async fn list_objects_v2<S: S3State>(
             let truncated = keyed.len() > max_keys;
             let keyed: Vec<(String, u64)> = keyed.into_iter().take(max_keys).collect();
 
+            // Client-supplied text (prefix, keys, the continuation token) is
+            // XML-escaped — an unescaped `&`/`<` in a prefix used to produce
+            // malformed XML and could inject fake <Contents> entries.
             let contents: Vec<String> = keyed
                 .iter()
                 .map(|(k, bytes)| {
-                    format!("<Contents><Key>{k}</Key><Size>{bytes}</Size></Contents>")
+                    format!(
+                        "<Contents><Key>{}</Key><Size>{bytes}</Size></Contents>",
+                        xml_escape(k)
+                    )
                 })
                 .collect();
 
@@ -87,24 +93,31 @@ pub async fn list_objects_v2<S: S3State>(
                 None
             };
 
+            let bucket_escaped = xml_escape(&bucket);
+            let prefix_escaped = xml_escape(&prefix);
             let xml = format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-<Name>{bucket}</Name>
+<Name>{bucket_escaped}</Name>
 <IsTruncated>{truncated}</IsTruncated>
 <KeyCount>{count}</KeyCount>
 <MaxKeys>{max_keys}</MaxKeys>
-<Prefix>{prefix}</Prefix>
+<Prefix>{prefix_escaped}</Prefix>
 {next}
 {contents}
 </ListBucketResult>"#,
-                bucket = bucket,
+                bucket_escaped = bucket_escaped,
                 truncated = truncated,
                 count = contents.len(),
                 max_keys = max_keys,
-                prefix = prefix,
+                prefix_escaped = prefix_escaped,
                 next = next_token
-                    .map(|t| format!("<NextContinuationToken>{t}</NextContinuationToken>"))
+                    .map(|t| {
+                        format!(
+                            "<NextContinuationToken>{}</NextContinuationToken>",
+                            xml_escape(&t)
+                        )
+                    })
                     .unwrap_or_default(),
                 contents = contents.join("\n"),
             );

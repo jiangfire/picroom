@@ -257,6 +257,17 @@ async fn set_user_disabled(
         .await
         .map_err(ApiError::from)?;
 
+    // A disabled user must not keep working: revoke every live session so
+    // their outstanding tokens die now, not at expiry (R-20, D-6). A failed
+    // cascade is logged, not fatal — the flag itself is set.
+    if disabled {
+        if let Some(sessions) = &state.session_repo {
+            if let Err(e) = sessions.revoke_all_for_user(uid.as_uuid()).await {
+                tracing::error!(user_id = %uid, error = %e, "session cascade revoke failed");
+            }
+        }
+    }
+
     let event = AuditEvent {
         id: Uuid::now_v7(),
         timestamp: OffsetDateTime::now_utc(),

@@ -98,7 +98,7 @@ jobs:
   #
   # The spec calls for ≥ 80 % line coverage, but the workspace currently sits
   # at ~59 % (measured 2026-07-09). Rather than block every merge on an
-  # unmet target, this job enforces an INTERIM floor of 50 % while we grow
+  # unmet target, this job enforces an INTERIM floor while we grow
   # coverage toward the spec target. Remediation plan (tracked in
   # docs/coverage-plan.md): add integration tests for s3compat (object/list/
   # multipart), storage drivers (s3/minio), api handlers (teams/admin), the

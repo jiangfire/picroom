@@ -241,7 +241,10 @@ impl S3Driver {
             payload
         });
 
-        let host = url.host_str().unwrap_or("").to_string();
+        // R-16: sign `host` WITH its port — MinIO/self-hosted endpoints on
+        // non-default ports fail SignatureDoesNotMatch otherwise. The `url`
+        // crate normalizes default ports away, so AWS is unaffected.
+        let host = host_with_port(url).unwrap_or_default();
         let mut signed_headers: Vec<(String, String)> = vec![
             ("host".into(), host),
             ("x-amz-date".into(), amz_date.clone()),

@@ -69,6 +69,9 @@ pub struct AppState {
     pub oidc_admin_emails: Arc<HashSet<String>>,
     /// Whether OIDC state cookies are marked `Secure` (false for local HTTP dev).
     pub cookie_secure: bool,
+    /// Refuse sid-less tokens when a session repository is configured
+    /// (`[auth].require_sessions`; the D-6 compat window).
+    pub require_sessions: bool,
     /// Login-session repository (None without a DB). Makes `logout` and the
     /// disable-user cascade revoke outstanding tokens (D-6).
     pub session_repo: Option<Arc<dyn SessionRepository>>,
@@ -87,6 +90,10 @@ impl JwtProvider for AppState {
     fn session_repo(&self) -> Option<&Arc<dyn SessionRepository>> {
         self.session_repo.as_ref()
     }
+
+    fn require_sessions(&self) -> bool {
+        self.require_sessions
+    }
 }
 
 impl JwtProvider for Arc<AppState> {
@@ -96,6 +103,10 @@ impl JwtProvider for Arc<AppState> {
 
     fn session_repo(&self) -> Option<&Arc<dyn SessionRepository>> {
         self.session_repo.as_ref()
+    }
+
+    fn require_sessions(&self) -> bool {
+        self.require_sessions
     }
 }
 
@@ -134,6 +145,7 @@ impl AppState {
             oidc_providers: Arc::new(HashMap::new()),
             oidc_admin_emails: Arc::new(HashSet::new()),
             cookie_secure: false,
+            require_sessions: false,
             session_repo: None,
             acl_repo: None,
             authz: Arc::new(AuthzService::without_backends()),

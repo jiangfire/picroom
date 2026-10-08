@@ -27,8 +27,9 @@ pub enum S3Error {
     Internal(String),
 }
 
-/// Minimal XML-escape for text content.
-fn xml_escape(s: &str) -> String {
+/// Minimal XML-escape for text content (also used by the list handler for
+/// client-supplied prefixes/keys/tokens).
+pub(crate) fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

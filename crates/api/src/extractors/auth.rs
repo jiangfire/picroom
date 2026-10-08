@@ -37,6 +37,13 @@ pub trait JwtProvider {
     fn session_repo(&self) -> Option<&std::sync::Arc<dyn picroom_service::SessionRepository>> {
         None
     }
+
+    /// Whether sid-less tokens are refused when a session repository is
+    /// configured (`[auth].require_sessions`). Default `false`: pre-session
+    /// tokens stay valid for one TTL window (D-6).
+    fn require_sessions(&self) -> bool {
+        false
+    }
 }
 
 /// Extractor: reads `Authorization: Bearer <jwt>` and validates it.
@@ -85,6 +92,11 @@ where
         );
 
         // Session binding: a sid-bearing token must resolve to a live session.
+        // With `[auth].require_sessions`, tokens WITHOUT a sid are refused
+        // outright (the D-6 compat window is closed).
+        if state.require_sessions() && state.session_repo().is_some() && claims.sid.is_none() {
+            return Err((StatusCode::UNAUTHORIZED, "session required"));
+        }
         if let Some(sid_text) = &claims.sid {
             if let Some(sessions) = state.session_repo() {
                 let sid = Uuid::parse_str(sid_text)

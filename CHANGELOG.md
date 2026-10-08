@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.1] - 2026-10-07
 
-### Fixed — v1.0 review remediation (docs/review-v1.0.md, all 33 findings)
+### Fixed — v1.0 review remediation (docs/review-v1.0.md, all 32 findings R-01..R-32)
 
 Critical (data loss / auth bypass):
 
@@ -46,8 +46,9 @@ Medium/Low:
   and the encode toggles; `strip_exif` documented as variants-only (R-10).
 - Worker: per-job panic guard (jobs fail into retry/DLQ, slots survive) and
   job leases with dead-worker reclaim (R-11, R-12).
-- Bucket scoping with `NoSuchBucket`; `host[:port]` signing for MinIO;
-  `prefix`/`max-keys`/`continuation-token` in ListObjectsV2 (R-15, R-16).
+- Bucket scoping with `NoSuchBucket`; `host[:port]` signing everywhere
+  (header-signed requests AND presigned URLs); `prefix`/`max-keys`/
+  `continuation-token` in ListObjectsV2 (R-15, R-16).
 - Login/logout are audited; `audit_events` is append-only (trigger-rejected
   UPDATE/DELETE) (R-17).
 - `image_variants` upsert is idempotent (COALESCE unique index, migration

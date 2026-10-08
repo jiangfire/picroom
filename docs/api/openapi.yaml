@@ -111,20 +111,25 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Login successful
-          headers:
-            Set-Cookie:
-              schema:
-                type: string
-              description: Session cookie (HttpOnly, SameSite=Lax)
+          description: >
+            Login successful. Returns a bearer token; no cookie is set and no
+            rate limiter exists (spec OQ-6 — rate limiting not implemented).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                required: [access_token, token_type, expires_in]
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: Bearer
+                  expires_in:
+                    type: integer
+                    description: Token lifetime in seconds.
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/RateLimited'
 
   /api/v1/auth/oidc/{provider}/login:
     get:
@@ -274,8 +279,8 @@ paths:
                   next_cursor:
                     type: string
                     nullable: true
-      '404':
-        $ref: '#/components/responses/NotFound'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       tags: [teams]
       summary: Add a member to a team
@@ -297,12 +302,8 @@ paths:
       operationId: listImages
       parameters:
         - in: query
-          name: team_id
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: owner_id
+          name: owner
+          description: Another user's id; honored only for principals with Image/Update (manager/admin).
           schema:
             type: string
             format: uuid
@@ -353,7 +354,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Image'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Bad request (unsupported media type, corrupt image, quota/body limit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '403':
           $ref: '#/components/responses/Forbidden'
         '413':
@@ -362,8 +367,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '415':
-          description: Unsupported media type
 
   /api/v1/images/{imageId}:
     parameters:
@@ -715,9 +718,13 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/StoragePolicy'
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StoragePolicy'
     post:
       tags: [storage, admin]
       summary: Create a storage policy
@@ -880,6 +887,24 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    AclGrant:
+      type: object
+      required: [subject_type, subject_id, permission, effect]
+      properties:
+        subject_type:
+          type: string
+          enum: [user, team]
+        subject_id:
+          type: string
+          format: uuid
+        permission:
+          type: string
+          enum: [read, create, update, delete, admin]
+          description: '`admin` acts as a wildcard for every action.'
+        effect:
+          type: string
+          enum: [allow, deny]
+          description: '`deny` is the highest-priority rule (overrides admin).'
     Error:
       type: object
       required: [code, message]
@@ -966,7 +991,7 @@ components:
           type: string
         password:
           type: string
-          minLength: 12
+          minLength: 8
         role:
           type: string
           enum: [viewer, uploader, manager, admin]
@@ -1007,13 +1032,13 @@ components:
 
     TeamMember:
       type: object
-      required: [user, role, joined_at]
+      required: [user_id, role, joined_at]
       properties:
-        user:
-          $ref: '#/components/schemas/User'
+        user_id:
+          type: string
+          format: uuid
         role:
           type: string
-          enum: [viewer, uploader, manager, admin]
         joined_at:
           type: string
           format: date-time

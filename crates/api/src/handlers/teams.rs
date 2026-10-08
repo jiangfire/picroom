@@ -18,6 +18,15 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+/// Query parameters for `GET /api/v1/teams`.
+#[derive(Debug, Default, Deserialize)]
+pub struct TeamListParams {
+    /// Page size (1-200).
+    pub limit: Option<u32>,
+    /// Continuation cursor from a previous page.
+    pub cursor: Option<String>,
+}
+
 /// Request body for `POST /api/v1/teams`.
 #[derive(Debug, Deserialize)]
 pub struct CreateTeamBody {
@@ -43,6 +52,11 @@ pub struct AddMemberBody {
 fn default_member_role() -> String {
     "uploader".into()
 }
+
+/// Roles a team manager may assign. Team-level `admin` is deliberately not
+/// assignable: `Role::Admin` in `team_roles` would grant everything inside
+/// the team scope, which a mere team manager must not hand out.
+const ASSIGNABLE_TEAM_ROLES: &[&str] = &["viewer", "uploader", "manager"];
 
 /// `POST /api/v1/teams` — create a team.
 ///
@@ -120,6 +134,7 @@ pub async fn get(
 pub async fn list(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
+    axum::extract::Query(params): axum::extract::Query<TeamListParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo = state
         .team_repo
@@ -129,10 +144,11 @@ pub async fn list(
         .permissions
         .check(&auth.roles, ResourceType::Team, PermissionAction::Read)
         .is_ok();
-    // R-25: bounded queries — clamp the page like /images.
+    // R-25: bounded queries — clamp the page like /images. The query params
+    // are honored so clients can actually page past the first window.
     let page = PageReq {
-        limit: 100,
-        cursor: None,
+        limit: params.limit.unwrap_or(100).clamp(1, 200),
+        cursor: params.cursor,
     };
     let teams = if can_read_all {
         repo.list(page).await.map_err(ApiError::from)?
@@ -184,10 +200,20 @@ pub async fn add_member(
     let team_role = repo
         .member_role(TeamId(id), auth.user_id)
         .await
-        .unwrap_or(None);
+        .map_err(ApiError::from)?;
     let team_allowed = matches!(team_role.as_deref(), Some("manager" | "admin"));
     if !global_allowed && !team_allowed {
         return Err(ApiError::forbidden("not allowed"));
+    }
+    // Validate the role server-side: an unknown string would die in the DB
+    // CHECK as a 500, and team-level `admin` is not assignable (see
+    // ASSIGNABLE_TEAM_ROLES).
+    if !ASSIGNABLE_TEAM_ROLES.contains(&body.role.as_str()) {
+        return Err(ApiError::bad_request(format!(
+            "invalid team role '{}' (expected one of: {})",
+            body.role,
+            ASSIGNABLE_TEAM_ROLES.join(", ")
+        )));
     }
     repo.add_member(TeamId(id), body.user_id, &body.role)
         .await

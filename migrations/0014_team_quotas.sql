@@ -8,4 +8,3 @@ CREATE TABLE IF NOT EXISTS team_quotas (
     max_bytes BIGINT NOT NULL DEFAULT 1073741824
 );
 
-CREATE INDEX IF NOT EXISTS idx_team_quotas_team ON team_quotas(team_id);

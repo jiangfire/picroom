@@ -423,6 +423,28 @@ async fn lease_expired_running_row_is_reclaimed() {
         .unwrap()
         .expect("expired lease must be re-claimed");
     assert_eq!(claimed.id, job_id);
+    // The claim must bind BOTH lease parameters (?1 seconds, ?2 worker id).
+    // A bind/placeholder mismatch used to write lease=now + claimed_by=NULL,
+    // instantly expiring every claim.
+    let (lease, claimant): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT lease_expires_at, claimed_by FROM jobs WHERE id = ?1")
+            .bind(job_id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        claimant.is_some(),
+        "claimed_by must be bound, got {lease:?}"
+    );
+    let lease = lease.expect("dequeue must write a lease");
+    let parsed =
+        time::OffsetDateTime::parse(&lease, &time::format_description::well_known::Rfc3339)
+            .expect("lease must be an RFC3339 timestamp");
+    let min_expected = time::OffsetDateTime::now_utc() + time::Duration::seconds(60);
+    assert!(
+        parsed > min_expected,
+        "lease must be ~now+300s, got {lease} (a stale/'now' value expires instantly)"
+    );
     // Completing clears the lease.
     q.complete(claimed.id, &picroom_worker::JobResult::Skipped)
         .await

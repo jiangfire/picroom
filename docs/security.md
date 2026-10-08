@@ -90,7 +90,7 @@ These are documented gaps, not silent failures:
 
 | Area | Status |
 |---|---|
-| **Quota enforcement** | Enforced in production. The PG-backed `QuotaService` (wired in `bin/picroom/src/api_cmd.rs`) rejects uploads once `remaining_user` drops below the payload size. `remaining_user` = `quotas.max_bytes` − `SUM(bytes)` over non-deleted `images`, defaulting to `QuotaConfig.default_user_bytes` (10 GiB). Team-level quotas are still unlimited. `charge_user` remains a no-op because usage is computed live from the `images` table. |
+| **Quota enforcement** | Enforced in production. The PG-backed `QuotaService` (wired in `bin/picroom/src/api_cmd.rs`) rejects uploads once `remaining_user` drops below the payload size. `remaining_user` = `quotas.max_bytes` − `SUM(bytes)` over non-deleted `images`, defaulting to `QuotaConfig.default_user_bytes` (10 GiB). Team-level quotas are enforced via the `team_quotas` table (R-21); the no-op `charge_user` hook was deleted because usage is computed live from the `images` table. |
 | **DeleteService** | Wired. The HTTP `DELETE` handler routes through the unified `DeleteService` (storage removal + DB soft-delete + audit event). |
 | **OIDC / SSO** | Implemented — `GET /auth/oidc/:provider/{login,callback}`; id_token verified against the provider JWKS (RS256/ES256), `state`+`nonce` CSRF binding, accounts auto-provisioned as `viewer` (or `admin` via `auth.oidc.admin_emails` allowlist). |
 | **`admin audit tail`** | Implemented — reads `audit_events` for both PostgreSQL and SQLite (`admin/src/audit_cmd.rs`); `--follow` streams new events. |

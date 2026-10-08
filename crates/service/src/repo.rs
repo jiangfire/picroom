@@ -793,16 +793,19 @@ impl TeamRepository for PgTeamRepository {
         page: PageReq,
     ) -> Result<Page<TeamMember>, ServiceError> {
         // joined_at is not unique; page by offset within a clamped limit —
-        // rosters are small, and the point is the hard ceiling (R-25).
+        // rosters are small, and the point is the hard ceiling (R-25). The
+        // cursor is a plain offset and must be numeric; a garbage cursor is a
+        // client error, not silently page 1.
         let limit = usize::try_from(page.limit).unwrap_or(50).clamp(1, 500);
-        let offset: i64 = page
-            .cursor
-            .as_deref()
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
+        let offset: i64 = match page.cursor.as_deref() {
+            None | Some("") => 0,
+            Some(c) => c
+                .parse()
+                .map_err(|_| ServiceError::Internal("invalid cursor".into()))?,
+        };
         let rows: Vec<(Uuid, Uuid, String, OffsetDateTime)> = sqlx::query_as(
             r"SELECT team_id, user_id, role, joined_at FROM team_members
-              WHERE team_id = $1 ORDER BY joined_at ASC
+              WHERE team_id = $1 ORDER BY joined_at ASC, user_id ASC
               LIMIT $2 OFFSET $3",
         )
         .bind(team_id.as_uuid())

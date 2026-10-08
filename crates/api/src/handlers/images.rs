@@ -217,16 +217,9 @@ pub async fn get(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    // IDOR check: only the owner, or a principal permitted to manage images
-    // (manager/admin via RBAC), may view this image.
-    if auth.user_id != image.owner_id
-        && state
-            .permissions
-            .check(&auth.roles, ResourceType::Image, PermissionAction::Update)
-            .is_err()
-    {
-        return Err(ApiError::forbidden("not allowed"));
-    }
+    // Same engine as link/file: owner, team membership, ACL grant, or
+    // Image/Read with no team scope in play (deny rows always win).
+    authorize_image_read(&state, &auth, &image).await?;
     Ok(axum::Json(json!({
         "id": image.id.to_string(),
         "content_type": image.content_type,
@@ -293,14 +286,9 @@ pub async fn link(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    if auth.user_id != image.owner_id
-        && state
-            .permissions
-            .check(&auth.roles, ResourceType::Image, PermissionAction::Read)
-            .is_err()
-    {
-        return Err(ApiError::forbidden("not allowed"));
-    }
+    // Full spec-§10.3 evaluation (deny rows, team scope, ACL grants) — the
+    // old global-role check let any viewer read any image (agent review).
+    authorize_image_read(&state, &auth, &image).await?;
 
     let public_url = public_url_for(state.public_url_base.as_deref(), &image.key);
 
@@ -323,14 +311,7 @@ pub async fn file(
         return Err(ApiError::internal("image repo not configured"));
     };
     let image = repo.get(ImageId(id)).await.map_err(ApiError::from)?;
-    if auth.user_id != image.owner_id
-        && state
-            .permissions
-            .check(&auth.roles, ResourceType::Image, PermissionAction::Read)
-            .is_err()
-    {
-        return Err(ApiError::forbidden("not allowed"));
-    }
+    authorize_image_read(&state, &auth, &image).await?;
 
     let location = public_url_for(state.public_url_base.as_deref(), &image.key);
     Ok((
@@ -338,6 +319,41 @@ pub async fn file(
         [(axum::http::header::LOCATION, location.as_str())],
     )
         .into_response())
+}
+
+/// Authorizes a READ of `image` through `AuthzService`.
+///
+/// - Team-scoped images: `Image/Read` evaluated in the full spec-§10.3 order
+///   (deny → owner → team role → ACL → global role → deny), so a viewer who
+///   is a team member can read, and a deny row wins over everything.
+/// - Personal images are owner-only (spec §10.2): a non-owner needs
+///   `Image/Update` (manager/admin) or an ACL `update`/`admin` grant — the
+///   old route gate (`owner || Image/Update`) preserved verbatim, now in the
+///   engine so deny rows apply there too.
+async fn authorize_image_read(
+    state: &AppState,
+    auth: &AuthUser,
+    image: &picroom_domain::Image,
+) -> Result<(), ApiError> {
+    let action = if image.team_id.is_none() && image.owner_id != auth.user_id {
+        PermissionAction::Update
+    } else {
+        PermissionAction::Read
+    };
+    state
+        .authz
+        .authorize(
+            &auth.actor(),
+            &picroom_auth::Resource::new(
+                ResourceType::Image,
+                image.id.as_uuid(),
+                Some(image.owner_id.as_uuid()),
+                image.team_id.map(|t| t.as_uuid()),
+            ),
+            action,
+        )
+        .await
+        .map_err(ApiError::from)
 }
 
 /// Builds the public URL for a storage key.
