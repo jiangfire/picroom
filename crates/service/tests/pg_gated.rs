@@ -32,7 +32,6 @@ async fn pg_pool() -> Option<sqlx::PgPool> {
 /// The suite's tests run concurrently against one pool; identical concurrent
 /// DDL can collide inside the system catalog, so the setup is serialized
 /// behind a session advisory lock.
-
 async fn ensure_schema(pool: &sqlx::PgPool) {
     const SCHEMA_LOCK: i64 = 0x7069_6365_726f_6f6d; // 'piceroom'
     sqlx::query("SELECT pg_advisory_lock($1)")
