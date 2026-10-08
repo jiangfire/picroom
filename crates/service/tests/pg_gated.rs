@@ -28,7 +28,17 @@ async fn pg_pool() -> Option<sqlx::PgPool> {
 }
 
 /// Creates the minimal schema when the target DB has not been migrated.
+///
+/// The suite's tests run concurrently against the same pool, and concurrent
+/// `CREATE TABLE IF NOT EXISTS` can collide inside pg_catalog (duplicate
+/// pg_type key) — serialize the setup behind a session advisory lock.
 async fn ensure_schema(pool: &sqlx::PgPool) {
+    const SCHEMA_LOCK: i64 = 0x7069_6365_726f_6f6d; // 'piceroom'
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(SCHEMA_LOCK)
+        .execute(pool)
+        .await
+        .expect("advisory lock");
     sqlx::query(
         r"CREATE TABLE IF NOT EXISTS images (
             id             UUID PRIMARY KEY,
@@ -115,6 +125,11 @@ async fn ensure_schema(pool: &sqlx::PgPool) {
     .execute(pool)
     .await
     .unwrap();
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(SCHEMA_LOCK)
+        .execute(pool)
+        .await
+        .expect("advisory unlock");
 }
 
 /// R-18: enqueueing the same avif variant twice yields ONE row (size IS NULL
