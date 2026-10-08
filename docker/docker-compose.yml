@@ -35,7 +35,7 @@ services:
   # MinIO (S3-compatible object storage for dev)
   # ----------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: picroom-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"

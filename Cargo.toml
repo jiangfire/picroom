@@ -156,6 +156,11 @@ unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.lints.clippy]
+# clippy 1.99's `double_must_use` fires on every `#[async_trait]` trait whose
+# methods return `Result`: the macro itself stamps `#[must_use]` on the boxed
+# future it generates. This is macro output, not our API surface, so the lint
+# is allowed workspace-wide rather than sprinkled over every trait.
+double_must_use = "allow"
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
