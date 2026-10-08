@@ -366,9 +366,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Validate compose file
+        # Validates every service (postgres + the profiled s3/mailhog/dev
+        # services) without pulling them.
         run: docker compose -f docker/docker-compose.yml config --quiet
+      # MinIO images are no longer anonymously pullable (Docker Hub denies,
+      # quay.io requires auth from hosted runners), so the smoke starts the
+      # postgres service only; MinIO is exercised with credentialed
+      # registries (S11/S12 manual checkpoints).
       - name: Start stack
-        run: docker compose -f docker/docker-compose.yml up -d postgres minio
+        run: docker compose -f docker/docker-compose.yml up -d postgres
       - name: Wait for postgres
         run: |
           for i in $(seq 1 30); do
@@ -379,17 +385,6 @@ jobs:
             sleep 2
           done
           echo "Postgres not ready"
-          exit 1
-      - name: Wait for MinIO
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:9000/minio/health/live; then
-              echo "MinIO ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "MinIO not ready"
           exit 1
       - name: Tear down
         if: always()

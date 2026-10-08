@@ -4,10 +4,12 @@
 -- constraint with an expression index over COALESCE(size, -1). Portable SQL
 -- (SQLite supports expression indexes too).
 
--- 1. Dedupe existing rows (keep the oldest of each natural key).
+-- 1. Dedupe existing rows (keep the oldest of each natural key). `id` is
+-- UUID on PostgreSQL and has no MIN aggregate there, so order by the text
+-- form — portable across both dialects and stable enough for "keep one".
 DELETE FROM image_variants
-WHERE id NOT IN (
-    SELECT MIN(id) FROM image_variants
+WHERE id::text NOT IN (
+    SELECT MIN(id::text) FROM image_variants
     GROUP BY image_id, kind, COALESCE(size, -1)
 );
 

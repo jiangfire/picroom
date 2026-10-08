@@ -236,7 +236,7 @@ mod tests {
     fn issue_has_empty_scopes_by_default() {
         let s = JwtService::new("secret", "iss", "aud", 60);
         let claims = s.verify(&s.issue("u").unwrap()).unwrap();
-        assert!(claims.scopes.is_empty());
+        assert_eq!(claims.scopes, Vec::<String>::new());
     }
 
     #[test]

@@ -83,7 +83,7 @@ mod tests {
     fn page_marks_no_more_when_cursor_absent() {
         let p: Page<u32> = Page::new(vec![1], None, PageReq::default());
         assert!(!p.has_more);
-        assert!(!p.is_empty());
+        assert_eq!(p.len(), 1);
     }
 
     #[test]

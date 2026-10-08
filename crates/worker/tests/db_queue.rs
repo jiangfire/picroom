@@ -217,7 +217,7 @@ async fn full_pipeline_avif_roundtrip() {
             bytes: Some(b),
         } => {
             assert_eq!(kind, "avif");
-            assert!(!b.is_empty());
+            assert!(!b.is_empty(), "variant bytes must not be empty");
             // Key should follow `<id>/avif`.
             assert!(key.contains("avif"), "key={key}");
             // Verify the variant is actually stored.
@@ -308,8 +308,8 @@ async fn full_pipeline_webp_and_thumbnail() {
         StorageKey::parse(&format!("img/{}/thumbnail_200", image_id.as_uuid())).unwrap();
     let webp_bytes = storage.get(&webp_key).await.unwrap();
     let thumb_bytes = storage.get(&thumb_key).await.unwrap();
-    assert!(!webp_bytes.is_empty());
-    assert!(!thumb_bytes.is_empty());
+    assert_ne!(webp_bytes, Vec::new());
+    assert_ne!(thumb_bytes, Vec::new());
 }
 
 #[tokio::test]

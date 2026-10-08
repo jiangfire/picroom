@@ -58,11 +58,10 @@ async fn roundtrip(repo: &dyn ResourceAclRepository, resource_id: Uuid) {
     let grants = grants_for(user);
 
     // Empty at first.
-    assert!(repo
-        .list_grants("image", resource_id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        repo.list_grants("image", resource_id).await.unwrap(),
+        Vec::new()
+    );
 
     // Replace writes the full set.
     repo.replace_grants("image", resource_id, &grants)
@@ -84,7 +83,7 @@ async fn roundtrip(repo: &dyn ResourceAclRepository, resource_id: Uuid) {
 
     // Grants are scoped per resource.
     let other = Uuid::now_v7();
-    assert!(repo.list_grants("image", other).await.unwrap().is_empty());
+    assert_eq!(repo.list_grants("image", other).await.unwrap(), Vec::new());
 
     // Revoke removes exactly the subject's rows.
     let team = Uuid::now_v7();

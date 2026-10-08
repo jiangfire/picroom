@@ -33,9 +33,15 @@ services:
 
   # ----------------------------------------------------------------------
   # MinIO (S3-compatible object storage for dev)
+  #
+  # MinIO no longer serves images anonymously from Docker Hub, and quay.io
+  # now requires authenticated pulls from some environments — so this service
+  # lives behind the `s3` profile: `docker compose --profile s3 up -d`.
+  # CI's compose smoke validates the file and starts postgres only.
   # ----------------------------------------------------------------------
   minio:
     image: quay.io/minio/minio:latest
+    profiles: ["s3"]
     container_name: picroom-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"

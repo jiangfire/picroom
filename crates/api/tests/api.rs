@@ -365,7 +365,7 @@ async fn login_with_correct_password_returns_token() {
     let (status, json) = post_login(login_app(), "alice@example.com", PASSWORD).await;
     assert_eq!(status, StatusCode::OK, "got {status}, body: {json}");
     let token = json["access_token"].as_str().expect("access_token");
-    assert!(!token.is_empty());
+    assert_ne!(token, "");
 
     // The token must verify against the dev JWT service and carry the role.
     let jwt = picroom_auth::JwtService::new("dev-secret", "picroom", "picroom-api", 3600);

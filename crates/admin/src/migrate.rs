@@ -220,9 +220,9 @@ mod tests {
     fn all_pending_when_nothing_applied() {
         let known = known(&[1, 2]);
         let status = classify_migrations(&known, &[]);
-        assert!(status.applied.is_empty());
+        assert_eq!(status.applied, Vec::new());
         assert_eq!(status.pending.len(), 2);
-        assert!(status.failed.is_empty());
+        assert_eq!(status.failed, Vec::new());
     }
 
     #[test]
@@ -230,8 +230,8 @@ mod tests {
         let known = known(&[1, 2]);
         let status = classify_migrations(&known, &applied(&[1, 2], true));
         assert_eq!(status.applied.len(), 2);
-        assert!(status.pending.is_empty());
-        assert!(status.failed.is_empty());
+        assert_eq!(status.pending, Vec::new());
+        assert_eq!(status.failed, Vec::new());
     }
 
     #[test]

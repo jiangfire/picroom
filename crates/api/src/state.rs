@@ -373,8 +373,10 @@ mod tests {
         assert!(state.delete_service.is_none());
         assert!(state.s3_credentials.is_none());
         assert!(state.public_url_base.is_none());
-        assert!(state.oidc_providers.is_empty());
-        assert!(state.oidc_admin_emails.is_empty());
+        assert!(state.oidc_providers.as_ref().is_empty());
+        #[allow(clippy::assert_is_empty)] // HashMap has no convenient empty literal here
+        let _ = state.oidc_providers.is_empty();
+        assert!(state.oidc_admin_emails.as_ref().is_empty());
         assert!(!state.cookie_secure);
     }
 
@@ -425,7 +427,9 @@ mod tests {
             vec!["admin@example.com".to_string()],
             true,
         );
-        assert!(state.oidc_providers.is_empty());
+        assert!(state.oidc_providers.as_ref().is_empty());
+        #[allow(clippy::assert_is_empty)] // HashMap has no convenient empty literal here
+        let _ = state.oidc_providers.is_empty();
         assert_eq!(state.oidc_admin_emails.len(), 1);
         assert!(state.cookie_secure);
     }
