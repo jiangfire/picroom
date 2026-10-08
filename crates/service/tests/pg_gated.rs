@@ -31,7 +31,7 @@ async fn pg_pool() -> Option<sqlx::PgPool> {
 ///
 /// The suite's tests run concurrently against the same pool, and concurrent
 /// `CREATE TABLE IF NOT EXISTS` can collide inside pg_catalog (duplicate
-/// pg_type key) — serialize the setup behind a session advisory lock.
+/// `pg_type` key) — serialize the setup behind a session advisory lock.
 async fn ensure_schema(pool: &sqlx::PgPool) {
     const SCHEMA_LOCK: i64 = 0x7069_6365_726f_6f6d; // 'piceroom'
     sqlx::query("SELECT pg_advisory_lock($1)")
