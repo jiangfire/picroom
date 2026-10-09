@@ -229,6 +229,12 @@ jobs:
           workspaces: desktop/src-tauri
           key: windows-msvc
 
+      # tauri-action shells out to `npm run tauri` — the CLI lives in
+      # devDependencies, so node_modules must exist first.
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: desktop
+
       - name: Build + sign + bundle (Tauri)
         uses: tauri-apps/tauri-action@v0
         env:
