@@ -211,6 +211,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -249,8 +260,13 @@ jobs:
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v3
         with:
+          # tauri v2 with the npm CLI puts bundles under the REPO-ROOT
+          # target/ (observed on the v1.1.1 run), not desktop/src-tauri/target.
           files: |
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-          generate_release_notes: true
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+          # v3 does not infer the tag on jobs whose checkout is a moved tag —
+          # be explicit or it skips all uploads.
+          tag-name: v${{ steps.version.outputs.version }}
+          generate_release_notes: false
           draft: false
