@@ -116,7 +116,7 @@ jobs:
             asset_ext: zip
             use_cross: false
           - name: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
             target: x86_64-apple-darwin
             asset_ext: tar.gz
             use_cross: false
