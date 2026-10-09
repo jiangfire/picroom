@@ -69,6 +69,25 @@ picroom api    --config ./config/prod.toml
 picroom worker --config ./config/prod.toml --concurrency 4
 ```
 
+## 4. Upgrading to 1.1.x (from 1.0.0)
+
+Upgrades run the forward-only migrations `0009`–`0014` on first
+`admin migrate run`; they are additive (no data is rewritten) and safe to
+apply while the old version is still serving — deploy order is: migrate,
+then replace the API/worker binaries. New knobs introduced alongside:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `[auth].require_sessions` | `false` | When a session store is configured, refuse tokens without a `sid`. Flip to `true` to close the one-TTL legacy-token window. |
+| `[pipeline].quality.avif` / `.jpeg` | `60` / `85` | Encoder quality for AVIF variants and thumbnails. |
+| `[pipeline].quality.webp` | `80` | Reserved — WebP encoding is lossless-only today. |
+
+Behavior changes worth knowing: team-level quotas are enforced via the new
+`team_quotas` table (absence of a row = default cap); login/OIDC sessions are
+revocable (logout and disabling a user kill tokens immediately); `audit_events`
+is append-only; S3 multipart requests answer `501` (clients fall back to
+single PUT).
+
 **Production guardrail:** in release builds both `api` and `worker` refuse to
 start when `PICROOM_AUTH__JWT_SECRET` is still the default `change-me`. Set a
 strong random secret before exposing the service.
