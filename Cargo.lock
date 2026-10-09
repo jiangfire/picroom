@@ -2370,7 +2370,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "picroom"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2399,7 +2399,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-admin"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2422,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-api"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-audit"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "insta",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-auth"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-domain"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "pretty_assertions",
  "proptest",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-imaging"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2534,7 +2534,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-infra"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "figment",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-s3compat"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-service"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2613,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-storage"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2641,7 +2641,7 @@ dependencies = [
 
 [[package]]
 name = "picroom-worker"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "async-trait",
  "bytes",

@@ -5,7 +5,7 @@ All notable changes to Picroom are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] - 2026-10-07
+## [1.1.1] - 2026-10-09
 
 ### Fixed — v1.0 review remediation (docs/review-v1.0.md, all 32 findings R-01..R-32)
 
@@ -71,9 +71,9 @@ Medium/Low:
 
 Coverage gate raised 60 → 65 (spec target 80 % tracked in P4).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-07
 
-Post-1.0.0 hardening and feature work. Will roll up into 1.1.0.
+Post-1.0.0 hardening and feature work (the `v1.1.0` tag).
 
 ### Added
 - OIDC / SSO end-to-end (`/api/v1/auth/oidc/:provider/{login,callback}`):
@@ -98,7 +98,7 @@ Post-1.0.0 hardening and feature work. Will roll up into 1.1.0.
   coexist.
 - Hard quota enforcement for the PG path: `QuotaService` rejects uploads
   once `quotas.max_bytes - SUM(bytes) < payload` (default 10 GiB per user).
-  Team-level quotas still unlimited.
+  (Team-level caps arrived in 1.1.1 via the `team_quotas` table.)
 - Desktop admin client (`desktop/`): Tauri 2 + Vue 3 native GUI for
   drag-drop upload, public-link copy, image/user/team/storage/audit admin
   screens. Multi-profile support. `desktop/src-tauri` is a standalone
