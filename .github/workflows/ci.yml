@@ -100,7 +100,7 @@ jobs:
   # at ~59 % (measured 2026-07-09). Rather than block every merge on an
   # unmet target, this job enforces an INTERIM floor while we grow
   # coverage toward the spec target. Remediation plan (tracked in
-  # docs/coverage-plan.md): add integration tests for s3compat (object/list/
+  # docs/plan-post-1.1.1.md): add integration tests for s3compat (object/list/
   # multipart), storage drivers (s3/minio), api handlers (teams/admin), the
   # worker pipeline, and infra; raise the floor in steps (50 → 65 → 80) as
   # each area is covered. The `bin/` CLI entry points are excluded from the
@@ -117,7 +117,7 @@ jobs:
         run: cargo install cargo-tarpaulin --locked
       # Interim floor (see job header). 60 → 65 after the v1.0 remediation
       # added handler/service/worker/ACL tests; 80 % remains the spec target
-      # (docs/tasks-remediation-v1.md P4).
+      # (docs/plan-post-1.1.1.md P4).
       - name: Run coverage
         run: cargo tarpaulin --workspace --fail-under 65 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
       - name: Upload to Codecov

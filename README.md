@@ -106,11 +106,8 @@ See [`docs/spec.md`](docs/spec.md) for the full design and [`docs/adr/`](docs/ad
 for architectural decision records. The desktop client has its own spec at
 [`docs/spec-admin-client.md`](docs/spec-admin-client.md).
 
-A v1.0 completeness and correctness review — with 33 tracked findings, a
-phased remediation plan, and an executable task list — lives in
-[`docs/review-v1.0.md`](docs/review-v1.0.md),
-[`docs/plan-remediation-v1.md`](docs/plan-remediation-v1.md), and
-[`docs/tasks-remediation-v1.md`](docs/tasks-remediation-v1.md).
+A v1.0 completeness review found 33 issues; all were fixed and shipped in
+v1.1.1 — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Desktop admin client
 

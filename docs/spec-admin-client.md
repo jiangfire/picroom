@@ -533,7 +533,7 @@ The feature is **done** when all of the following hold:
 - **Phase 2 — Client** (in `desktop/`): tasks 2.1–2.13. Scaffold → auth →
   images core (list/upload/link/download) → remaining admin screens → packaging.
 
-Detailed task breakdown lives in `docs/plan-admin-client.md` and
-`docs/tasks-admin-client.md` (produced in the PLAN/TASKS phases).
+The plan/tasks/test-plan trackers were removed after the client shipped in
+v1.1.1; this spec and ADR-0008 are the design record.
 
 _End of spec._

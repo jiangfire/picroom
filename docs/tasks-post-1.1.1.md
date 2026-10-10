@@ -2,7 +2,7 @@
 
 > **Status**: Drafted 2026-10-09
 > **Parent**: [`plan-post-1.1.1.md`](plan-post-1.1.1.md) · **Prior**:
-> [`tasks-remediation-v1.md`](tasks-remediation-v1.md) (P0–P3 ✅, P4 continues here)
+> v1.0 remediation tasks (P0–P3 ✅; P4 continues here)
 > **Last updated**: 2026-10-09
 
 Rule (inherited D-12): every task ships with the test that fails without its
