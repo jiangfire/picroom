@@ -85,10 +85,25 @@ fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberatel
   note the one-time mass-401 risk and how to stage it
 - **Verify**: docs review
 
-### ⬜ Task H3: ListObjectsV2 cross-driver-page pagination
-- Loop `storage().list(next_cursor)` until `max_keys`/exhausted; `IsTruncated`
-  from the loop; test with a fake store returning 2 pages
-- **Verify**: `cargo test -p picroom-s3compat` + new pagination test
+### ✅ Task H3: ListObjectsV2 cross-driver-page pagination
+- The truncation was one layer lower than this task assumed. `s3compat` pages
+  correctly over whatever `storage().list()` returns, but `StorageLister::list`
+  has no cursor parameter — so the paging had to happen inside the driver.
+  `S3Driver::list` (which `MinioDriver` aliases) issued a **single**
+  `list-type=2` request with no `continuation-token` and no `max-keys`, and
+  never parsed `IsTruncated`. S3 caps a response at 1000 keys, so everything
+  past that was silently dropped — from the admin listing, the worker and
+  `aws s3 ls` alike. `LocalDriver` returns everything in one page, which is why
+  local deployments never showed it.
+- Now walks `NextContinuationToken` until the backend stops claiming truncation,
+  returning one complete `Page` (what the trait promises — matches `LocalDriver`,
+  no trait change, no new dependency). Stops early if a backend repeats a
+  non-advancing token rather than spinning to the page cap.
+- Parsing is now whole-document instead of line-oriented: a line-based scrape
+  read **nothing** from a single-line response body, so it would also have
+  missed `IsTruncated` on backends that do not pretty-print.
+- **Verify**: `cargo test -p picroom-storage --test s3` — two wiremock tests
+  (two-page walk, non-advancing token); both fail against the old driver
 
 ### ⬜ Task H4: ListObjectsV2 `delimiter`
 - Implement `CommonPrefixes` grouping, or answer `NotImplemented` when

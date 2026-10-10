@@ -22,6 +22,32 @@ streams remain, in priority order:
    SQLite repository layer. Each gets either an implementation or an explicit
    descope in the spec — no more silent "still unlimited" drift.
 
+### Priority order changed 2026-10-10
+
+P4 is **paused after 4.A + the first 4.B pass**, by decision: the coverage
+tooling now works and the table is trustworthy, but the remaining P4 work is
+test-writing against a target, while streams 2 and 3 contain behaviour that is
+wrong or missing for users. Feature work goes first; P4 resumes afterwards with
+the numbers in §4 already banked.
+
+What P4 did buy, and what carries over:
+
+- The coverage job has a real per-crate table and a migrated PostgreSQL, so
+  `*_pg` code is measurable at all (4.A, merged).
+- `crates/admin` 51.97 % → 75.98 % (4.B, partial, merged).
+- The rest of the backfill list in `tasks-post-1.1.1.md` stays accurate as
+  written; it is simply not next.
+
+### Next up: H3, and why it outranks the rest of Hygiene
+
+`S3Driver::list` issues a **single** `list-type=2` request with no
+`continuation-token` and no `max-keys`, and never parses `IsTruncated`. Against
+a real S3 or MinIO backend the API caps a response at 1000 keys, so everything
+beyond that is **silently dropped** — from the admin UI, from the worker, and
+from `s3compat`'s `ListObjectsV2`, which paginates on top of it. `LocalDriver`
+returns everything in one page and is unaffected, which is why this has gone
+unnoticed.
+
 Guiding constraints (inherited from `plan-remediation-v1.md`):
 
 - Every task ships with the test that fails without it.
