@@ -133,6 +133,31 @@ mod tests {
     }
 
     #[test]
+    fn zero_max_connections_is_rejected() {
+        let mut cfg = base_config();
+        cfg.database.max_connections = 0;
+        assert!(validate_config(&cfg)
+            .unwrap_err()
+            .contains("max_connections"));
+    }
+
+    #[test]
+    fn out_of_range_webp_quality_is_rejected() {
+        // The sibling avif/jpeg bounds are covered by
+        // `out_of_range_quality_is_rejected`; webp has its own guard.
+        let mut cfg = base_config();
+        cfg.pipeline.quality.webp = 150.0;
+        assert!(validate_config(&cfg).unwrap_err().contains("quality.webp"));
+    }
+
+    #[test]
+    fn non_positive_jwt_ttl_is_rejected() {
+        let mut cfg = base_config();
+        cfg.auth.jwt_ttl_secs = 0;
+        assert!(validate_config(&cfg).unwrap_err().contains("jwt_ttl_secs"));
+    }
+
+    #[test]
     fn default_jwt_secret_is_rejected() {
         // validate_config applies the release-build rule unconditionally for
         // explicit validation: an operator asking for validation on a config

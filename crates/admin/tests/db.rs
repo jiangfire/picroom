@@ -4,11 +4,16 @@
 //! Integration tests for the admin CLI against an in-memory `SQLite`
 //! database with the production schema (subset).
 
+use picroom_admin::audit_cmd::AuditCmdError;
+use picroom_admin::audit_tail;
+use picroom_admin::migrate_status;
 use picroom_admin::team::{team_add_member_sqlite, team_create_sqlite, team_list_sqlite};
 use picroom_admin::user::{
-    user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
+    open_pool, user_create_sqlite, user_disable_sqlite, user_list_sqlite, user_set_role_sqlite,
+    AnyPool,
 };
 use picroom_auth::Role;
+use picroom_infra::Database;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
@@ -154,4 +159,169 @@ async fn team_member_idempotent() {
         .await
         .unwrap();
     assert_eq!(count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// audit tail — reads `audit_events` (schema mirrors migrations/0005_sqlite_init.sql)
+// ---------------------------------------------------------------------------
+
+async fn make_audit_pool() -> SqlitePool {
+    let opts: SqliteConnectOptions = SqliteConnectOptions::new()
+        .filename(":memory:")
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .expect("connect");
+
+    sqlx::query(
+        "CREATE TABLE audit_events (
+            id          TEXT PRIMARY KEY,
+            timestamp   TEXT NOT NULL,
+            actor_id    TEXT,
+            actor_label TEXT,
+            action      TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id   TEXT,
+            ip          TEXT,
+            user_agent  TEXT,
+            metadata    TEXT NOT NULL DEFAULT '{}'
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create audit_events");
+    pool
+}
+
+#[tokio::test]
+async fn audit_tail_survives_corrupt_rows() {
+    let pool = make_audit_pool().await;
+
+    // A well-formed row.
+    sqlx::query(
+        "INSERT INTO audit_events (id, timestamp, actor_id, actor_label, action, target_type,
+                                   target_id, ip, user_agent, metadata)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )
+    .bind("11111111-1111-1111-1111-111111111111")
+    .bind("2026-01-02T03:04:05Z")
+    .bind("22222222-2222-2222-2222-222222222222")
+    .bind("alice@example.com")
+    .bind("image.upload")
+    .bind("image")
+    .bind("img-1")
+    .bind("127.0.0.1")
+    .bind("curl/8")
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .expect("insert good row");
+
+    // Every column the SQLite reader parses is garbage, and target_id/ip/
+    // user_agent are NULL. The reader must fall back rather than abort the
+    // whole tail — a single bad row cannot take the CLI down.
+    sqlx::query(
+        "INSERT INTO audit_events (id, timestamp, actor_id, actor_label, action, target_type,
+                                   target_id, ip, user_agent, metadata)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'image', NULL, NULL, NULL, ?6)",
+    )
+    .bind("not-a-uuid")
+    .bind("not-a-timestamp")
+    .bind("not-a-uuid")
+    .bind("bob@example.com")
+    .bind("image.delete")
+    .bind("not-json")
+    .execute(&pool)
+    .await
+    .expect("insert corrupt row");
+
+    audit_tail(&AnyPool::Sqlite(pool), false, None)
+        .await
+        .expect("audit tail tolerates malformed rows");
+}
+
+#[tokio::test]
+async fn audit_tail_actor_filter_matching_nothing_is_clean() {
+    let pool = make_audit_pool().await;
+    sqlx::query(
+        "INSERT INTO audit_events (id, timestamp, actor_label, action, target_type, metadata)
+         VALUES (?1, ?2, ?3, ?4, ?5, '{}')",
+    )
+    .bind("11111111-1111-1111-1111-111111111111")
+    .bind("2026-01-02T03:04:05Z")
+    .bind("alice@example.com")
+    .bind("image.upload")
+    .bind("image")
+    .execute(&pool)
+    .await
+    .expect("insert");
+
+    // An actor that matches nothing must simply print nothing and return —
+    // not error, not hang.
+    audit_tail(
+        &AnyPool::Sqlite(pool),
+        false,
+        Some("nobody@example.com".into()),
+    )
+    .await
+    .expect("empty result is not an error");
+}
+
+#[tokio::test]
+async fn audit_tail_reports_missing_table() {
+    // make_pool() has no `audit_events`; the DB error must reach the caller.
+    let pool = make_pool().await;
+    let err = audit_tail(&AnyPool::Sqlite(pool), false, None)
+        .await
+        .expect_err("missing table is an error");
+    assert!(matches!(err, AuditCmdError::Db(_)), "got {err:?}");
+}
+
+// ---------------------------------------------------------------------------
+// open_pool — scheme dispatch
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn open_pool_accepts_sqlite_url() {
+    // sqlx strips the `sqlite://` prefix and uses the remainder as the
+    // filename, so `:memory:` keeps this test off the filesystem (a Windows
+    // path would need forward slashes and is not worth the extra moving
+    // parts here).
+    let pool = open_pool("sqlite://:memory:")
+        .await
+        .expect("sqlite url opens");
+    assert!(matches!(pool, AnyPool::Sqlite(_)));
+}
+
+#[tokio::test]
+async fn open_pool_rejects_unknown_scheme() {
+    // `AnyPool` is not Debug, so unwrap the Err by hand rather than via
+    // `expect_err`.
+    let err = match open_pool("mysql://localhost/picroom").await {
+        Ok(_) => panic!("unknown scheme must not open a pool"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("unknown scheme"),
+        "unexpected error: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// migrate — status against a database that was never migrated
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn migrate_status_propagates_missing_tracking_table() {
+    let pool = make_audit_pool().await;
+    let db = Database::Sqlite(pool);
+    // Documented behaviour: a database with no `_sqlx_migrations` table makes
+    // `migrate status` fail rather than report everything as pending, so the
+    // CLI can advise running `migrate run` first.
+    let err = migrate_status(&db)
+        .await
+        .expect_err("unmigrated database reports an error");
+    assert!(err.to_string().contains("db:"), "unexpected error: {err}");
 }
