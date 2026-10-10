@@ -3,11 +3,22 @@
 
 //! PostgreSQL-gated tests: variant upsert idempotency (R-18/D-5) and the
 //! append-only guard on `audit_events` (R-17/S14). Skipped (with a note)
-//! when `DATABASE_URL` is absent or unreachable — CI's `test` job provides
-//! a migrated PostgreSQL instance.
+//! when `DATABASE_URL` is absent or unreachable — CI provides a PostgreSQL
+//! instance to both the `test` and `coverage` jobs.
 
 use picroom_worker::processor::VariantRepository;
 use uuid::Uuid;
+
+/// Schema the fixtures live in.
+///
+/// The suite creates its own tables, so they must not share a namespace with
+/// the migrated `public` ones: `CREATE TABLE IF NOT EXISTS` silently becomes a
+/// no-op once migrations have run, which would point these tests at the
+/// production schema instead — different column defaults (`storage_policy` has
+/// a DEFAULT here and a foreign key there) and extra foreign keys on
+/// `owner_id`. Pointing `search_path` at a dedicated schema keeps the fixtures
+/// self-contained whether or not the database has been migrated.
+const TEST_SCHEMA: &str = "pg_gated_test";
 
 async fn pg_pool() -> Option<sqlx::PgPool> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
@@ -18,7 +29,36 @@ async fn pg_pool() -> Option<sqlx::PgPool> {
         eprintln!("skipping: DATABASE_URL is not PostgreSQL");
         return None;
     }
-    match sqlx::PgPool::connect(&url).await {
+
+    // Bootstrap over a plain connection: the schema must exist before any
+    // pooled connection can point its search_path at it.
+    let bootstrap = match sqlx::PgPool::connect(&url).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("skipping: cannot connect to PostgreSQL ({e})");
+            return None;
+        }
+    };
+    let create = format!("CREATE SCHEMA IF NOT EXISTS {TEST_SCHEMA}");
+    if let Err(e) = sqlx::query(&create).execute(&bootstrap).await {
+        eprintln!("skipping: cannot create {TEST_SCHEMA} ({e})");
+        bootstrap.close().await;
+        return None;
+    }
+    bootstrap.close().await;
+
+    match sqlx::postgres::PgPoolOptions::new()
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query(&format!("SET search_path TO {TEST_SCHEMA}"))
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+    {
         Ok(p) => Some(p),
         Err(e) => {
             eprintln!("skipping: cannot connect to PostgreSQL ({e})");
@@ -27,7 +67,7 @@ async fn pg_pool() -> Option<sqlx::PgPool> {
     }
 }
 
-/// Creates the minimal schema when the target database has not been migrated.
+/// Creates the minimal schema this suite needs inside [`TEST_SCHEMA`].
 ///
 /// The suite's tests run concurrently against one pool; identical concurrent
 /// DDL can collide inside the system catalog, so the setup is serialized
@@ -102,6 +142,16 @@ async fn ensure_schema(pool: &sqlx::PgPool) {
     .await
     .unwrap();
     // The append-only triggers from migration 0013 (idempotent).
+    ensure_append_only_triggers(pool).await;
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(SCHEMA_LOCK)
+        .execute(pool)
+        .await
+        .expect("advisory unlock");
+}
+
+/// Installs the `audit_events` append-only guard inside [`TEST_SCHEMA`].
+async fn ensure_append_only_triggers(pool: &sqlx::PgPool) {
     sqlx::query(
         r"CREATE OR REPLACE FUNCTION audit_events_append_only() RETURNS trigger AS $$
          BEGIN RAISE EXCEPTION 'audit_events is append-only'; END;
@@ -112,11 +162,19 @@ async fn ensure_schema(pool: &sqlx::PgPool) {
     .unwrap();
     sqlx::query(
         r"DO $$ BEGIN
-             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'audit_events_no_update') THEN
+             -- Scope the existence check to this table. A migrated database
+             -- already carries identically named triggers on public.audit_events,
+             -- and a catalog-wide tgname match would skip the ones this suite
+             -- needs.
+             IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                            WHERE tgname = 'audit_events_no_update'
+                              AND tgrelid = 'audit_events'::regclass) THEN
                CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events
                  FOR EACH STATEMENT EXECUTE FUNCTION audit_events_append_only();
              END IF;
-             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'audit_events_no_delete') THEN
+             IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                            WHERE tgname = 'audit_events_no_delete'
+                              AND tgrelid = 'audit_events'::regclass) THEN
                CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
                  FOR EACH STATEMENT EXECUTE FUNCTION audit_events_append_only();
              END IF;
@@ -125,11 +183,6 @@ async fn ensure_schema(pool: &sqlx::PgPool) {
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(SCHEMA_LOCK)
-        .execute(pool)
-        .await
-        .expect("advisory unlock");
 }
 
 /// R-18: enqueueing the same avif variant twice yields ONE row (size IS NULL
