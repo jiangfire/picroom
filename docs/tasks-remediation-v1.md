@@ -330,6 +330,10 @@ so no table needs to be created — only `effect` (D-9) and a SQLite mirror (D-1
 
 ## Phase P4 — Coverage backfill to 80 %
 
+> **Continued in** [`tasks-post-1.1.1.md`](tasks-post-1.1.1.md) — the gate
+> moved 60 → 65 (2026-10-09, measured 75.32 % overall) and the remaining
+> per-crate backfill tasks are tracked there with current numbers.
+
 Per-task tests already landed in P0–P3 (D-12). This phase closes only the
 pre-existing backlog, bottom-up on the worst crates.
 
