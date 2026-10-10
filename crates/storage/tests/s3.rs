@@ -6,10 +6,10 @@
 use bytes::Bytes;
 use picroom_domain::StorageKey;
 use picroom_storage::driver::s3::{S3Config, S3Driver};
-use picroom_storage::driver::{StorageReader, StorageSigner, StorageWriter};
+use picroom_storage::driver::{StorageLister, StorageReader, StorageSigner, StorageWriter};
 use picroom_storage::StorageError;
 use std::time::Duration;
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path_regex, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn driver(server: &MockServer) -> S3Driver {
@@ -84,6 +84,89 @@ async fn delete_idempotent() {
     let d = driver(&server).await;
     let key = StorageKey::parse("img/x.bin").unwrap();
     d.delete(&key).await.expect("DELETE should succeed");
+}
+
+/// A `ListObjectsV2` response carries at most `MaxKeys` entries and reports the
+/// rest through `IsTruncated` plus `NextContinuationToken`. Reading only the
+/// first response silently dropped everything past that cap, so the driver has
+/// to follow the token until the backend says it is done.
+#[tokio::test]
+async fn list_follows_continuation_token_across_pages() {
+    const PAGE_ONE: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+        "\n",
+        "<ListBucketResult>",
+        "<Name>test-bucket</Name>",
+        "<IsTruncated>true</IsTruncated>",
+        "<NextContinuationToken>tok-1</NextContinuationToken>",
+        "<KeyCount>2</KeyCount>",
+        "<Contents><Key>img/a.png</Key><Size>10</Size></Contents>",
+        "<Contents><Key>img/b.png</Key><Size>20</Size></Contents>",
+        "</ListBucketResult>",
+    );
+    // Deliberately emitted as a single line: a driver that scraped the body
+    // line by line would read neither its keys nor its IsTruncated flag.
+    const PAGE_TWO: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+        "<ListBucketResult><Name>test-bucket</Name>",
+        "<IsTruncated>false</IsTruncated><KeyCount>1</KeyCount>",
+        "<Contents><Key>img/c.png</Key><Size>30</Size></Contents>",
+        "</ListBucketResult>",
+    );
+
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/test-bucket"))
+        .and(query_param_is_missing("continuation-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(PAGE_ONE))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/test-bucket"))
+        .and(query_param("continuation-token", "tok-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(PAGE_TWO))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let d = driver(&server).await;
+    let page = d.list(None).await.expect("list");
+
+    let keys: Vec<&str> = page.items.iter().map(|m| m.key.as_str()).collect();
+    assert_eq!(keys, ["img/a.png", "img/b.png", "img/c.png"]);
+    let sizes: Vec<u64> = page.items.iter().map(|m| m.bytes).collect();
+    assert_eq!(sizes, [10, 20, 30]);
+    // The listing is complete, so there is nothing left to page.
+    assert!(page.next_cursor.is_none());
+    assert!(!page.has_more);
+}
+
+/// A backend that keeps answering `IsTruncated=true` with the same token must
+/// not spin forever — the driver stops once the token stops advancing.
+#[tokio::test]
+async fn list_stops_when_continuation_token_does_not_advance() {
+    const STUCK: &str = concat!(
+        "<ListBucketResult><IsTruncated>true</IsTruncated>",
+        "<NextContinuationToken>stuck</NextContinuationToken>",
+        "<Contents><Key>img/a.png</Key><Size>1</Size></Contents>",
+        "</ListBucketResult>",
+    );
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/test-bucket"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(STUCK))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let d = driver(&server).await;
+    // Without the non-advancing guard this would keep paging until MAX_PAGES.
+    let page = d.list(None).await.expect("list terminates");
+    assert_eq!(page.items.len(), 2);
 }
 
 #[tokio::test]

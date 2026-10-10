@@ -503,73 +503,128 @@ impl StorageLister for S3Driver {
         &self,
         prefix: Option<&StorageKey>,
     ) -> Result<picroom_domain::Page<ObjectMeta>, StorageError> {
-        // Use S3 ListObjectsV2.
-        let mut url = self.base_url.clone();
-        url.set_path(&format!("/{}/", self.config.bucket));
-        url.query_pairs_mut().append_pair("list-type", "2");
-        if let Some(p) = prefix {
-            url.query_pairs_mut().append_pair("prefix", p.as_str());
-        }
-        // Path-style on the bucket — adjust to a bucket-scoped URL.
-        let headers = self.sign_request("GET", &url, &[], &[]);
-        let mut req = self.http.get(url);
-        for (k, v) in &headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| StorageError::Backend(format!("LIST: {e}")))?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(StorageError::Backend(format!(
-                "LIST failed: {status} - {body}"
-            )));
-        }
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| StorageError::Backend(format!("LIST body: {e}")))?;
+        // S3 caps a ListObjectsV2 response (1000 keys by default) and flags
+        // the rest with IsTruncated + NextContinuationToken. Walking only the
+        // first response silently dropped everything past that cap, which the
+        // admin listing, the worker and s3compat's ListObjectsV2 all inherit.
+        // Walk every page and hand back one complete Page: the trait promises
+        // a page of matches, not a single backend round-trip, which is also
+        // what LocalDriver already does.
+        const MAX_PAGES: usize = 10_000;
+        const PAGE_SIZE: usize = 1000;
 
-        // Minimal XML scrape — production uses quick-xml proper parsing.
-        let mut items = Vec::new();
-        let mut current_key = None;
-        let mut current_size: u64 = 0;
-        for line in body.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("<Key>") {
-                if let Some(k) = rest.strip_suffix("</Key>") {
-                    current_key = Some(k.to_string());
-                }
-            } else if let Some(rest) = line.strip_prefix("<Size>") {
-                if let Some(s) = rest.strip_suffix("</Size>") {
-                    current_size = s.parse().unwrap_or(0);
-                }
-            } else if line == "</Contents>" {
-                if let Some(k) = current_key.take() {
-                    if let Ok(key) = picroom_domain::StorageKey::parse(&k) {
-                        items.push(ObjectMeta {
-                            key,
-                            bytes: current_size,
-                            last_modified: OffsetDateTime::now_utc(),
-                            etag: None,
-                        });
-                    }
-                }
-                current_size = 0;
+        let mut items: Vec<ObjectMeta> = Vec::new();
+        let mut token: Option<String> = None;
+
+        for _ in 0..MAX_PAGES {
+            let mut url = self.base_url.clone();
+            url.set_path(&format!("/{}/", self.config.bucket));
+            url.query_pairs_mut().append_pair("list-type", "2");
+            url.query_pairs_mut()
+                .append_pair("max-keys", &PAGE_SIZE.to_string());
+            if let Some(p) = prefix {
+                url.query_pairs_mut().append_pair("prefix", p.as_str());
+            }
+            if let Some(t) = &token {
+                url.query_pairs_mut().append_pair("continuation-token", t);
+            }
+            // Path-style on the bucket — adjust to a bucket-scoped URL.
+            let headers = self.sign_request("GET", &url, &[], &[]);
+            let mut req = self.http.get(url);
+            for (k, v) in &headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| StorageError::Backend(format!("LIST: {e}")))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(StorageError::Backend(format!(
+                    "LIST failed: {status} - {body}"
+                )));
+            }
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| StorageError::Backend(format!("LIST body: {e}")))?;
+
+            items.extend(scrape_contents(&body));
+
+            let truncated = xml_flag(&body, "IsTruncated");
+            let next = xml_value(&body, "NextContinuationToken");
+            // Stop unless the backend both claims truncation and hands back a
+            // token that actually advances — a repeated token would spin here
+            // forever.
+            match (truncated, next) {
+                (true, Some(next)) if Some(&next) != token.as_ref() => token = Some(next),
+                _ => break,
             }
         }
 
+        // Also reached when MAX_PAGES is exhausted: hand back what was
+        // collected rather than failing the call outright, matching the
+        // "partial listing beats no listing" bias.
+        let total = items.len() as u32;
         Ok(picroom_domain::Page::new(
             items,
             None,
             picroom_domain::PageReq {
-                limit: 1000,
+                limit: total,
                 cursor: None,
             },
         ))
     }
+}
+
+/// Returns the trimmed text between `<name>` and `</name>`.
+///
+/// Scans the whole document rather than line by line: backends differ in
+/// whether they pretty-print the response, and a line-oriented scrape reads
+/// nothing at all from a single-line body.
+fn xml_value(xml: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+/// Whether an XML boolean element is `true`.
+fn xml_flag(xml: &str, name: &str) -> bool {
+    xml_value(xml, name).is_some_and(|v| v.eq_ignore_ascii_case("true"))
+}
+
+/// Extracts one `ObjectMeta` per `<Contents>` block.
+fn scrape_contents(xml: &str) -> Vec<ObjectMeta> {
+    const OPEN: &str = "<Contents>";
+    const CLOSE: &str = "</Contents>";
+
+    let mut items = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find(OPEN) {
+        let after = &rest[start + OPEN.len()..];
+        let Some(end) = after.find(CLOSE) else { break };
+        let block = &after[..end];
+        rest = &after[end + CLOSE.len()..];
+
+        let Some(raw_key) = xml_value(block, "Key") else {
+            continue;
+        };
+        let Ok(key) = picroom_domain::StorageKey::parse(&raw_key) else {
+            continue;
+        };
+        items.push(ObjectMeta {
+            key,
+            bytes: xml_value(block, "Size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
+            last_modified: OffsetDateTime::now_utc(),
+            etag: None,
+        });
+    }
+    items
 }
 
 #[async_trait]
