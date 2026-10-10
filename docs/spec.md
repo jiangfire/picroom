@@ -383,7 +383,6 @@ picroom/
 ├── docs/
 │   ├── spec.md                      # this file
 │   ├── spec-admin-client.md         # Tauri admin client spec
-│   ├── coverage-plan.md             # interim coverage floor + remediation
 │   ├── deployment.md
 │   ├── operations.md
 │   ├── security.md
@@ -1094,12 +1093,8 @@ review). It is a **thin HTTP client** over the `/api/v1/*` REST surface; it
 does **not** embed the server and does not talk to PostgreSQL directly. RBAC
 stays enforced server-side.
 
-The full design, command-layer Rust crate shape, and Phase 1/2/3 progress
-live in [`docs/spec-admin-client.md`](spec-admin-client.md),
-[`docs/plan-admin-client.md`](plan-admin-client.md),
-[`docs/tasks-admin-client.md`](tasks-admin-client.md), and
-[`docs/test-plan-admin-client.md`](test-plan-admin-client.md). The
-architectural decision is recorded in [ADR-0008](adr/0008-tauri-admin-client.md).
+The full design lives in [`docs/spec-admin-client.md`](spec-admin-client.md);
+the architectural decision is recorded in [ADR-0008](adr/0008-tauri-admin-client.md).
 
 Key facts:
 

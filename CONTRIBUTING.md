@@ -136,8 +136,8 @@ abstraction, or a non-obvious design choice, add or update an ADR in
   `tests/fixtures/`); the testcontainers-driven suite is a tracked
   follow-up, **not yet wired** — do not gate on `--features e2e`.
   See `docs/spec.md` §6.3.
-- Coverage ≥ 80 % per crate; 100 % for `domain`. Current numbers are
-  tracked in `docs/coverage-plan.md`.
+- Coverage ≥ 80 % per crate; 100 % for `domain`. Current numbers and the
+  ramp to 80 % are tracked in `docs/plan-post-1.1.1.md`.
 - Property-based tests with `proptest` for parsers and serializers.
 - Golden / snapshot tests for OpenAPI + config.
 

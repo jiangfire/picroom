@@ -1,7 +1,7 @@
 # Plan: Post-1.1.1 — Coverage to 80 %, Hygiene, Spec Gaps
 
 > **Status**: Drafted 2026-10-09
-> **Parent**: [`tasks-remediation-v1.md`](tasks-remediation-v1.md) (P4 continuation) ·
+> **Parent**: v1.0 remediation tasks (closed with v1.1.1; P4 continues here) ·
 > **Baseline**: v1.1.1 (`817344b`), CI fully green
 > **Last updated**: 2026-10-09
 
