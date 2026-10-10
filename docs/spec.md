@@ -1002,6 +1002,10 @@ per_user_rps = 10
 per_user_burst = 20
 per_ip_rps = 50
 per_ip_burst = 100
+# Auth endpoints only. Every attempt counts against the client address and
+# the account; over budget answers 429 + Retry-After. 0 disables.
+login_max_attempts = 5
+login_window_secs = 900
 
 [audit]
 retention_days = 365
@@ -1053,7 +1057,14 @@ Items that remain unresolved and require decision before implementation:
 6. **Rate limiting**: per-IP, per-user, or both? **Recommended**: per-user
    primary, per-IP secondary. **Resolved (2026-07-11)**: not implemented at
    the application layer; rely on the reverse proxy (see `docs/security.md`
-   §6).
+   §6). **Re-resolved (2026-10-10, OQ-6)**: both, as a fixed window on the
+   unauthenticated auth endpoints — every attempt is counted against the
+   client address *and* the account, over budget answers `429` +
+   `Retry-After`. `rate_limit.login_max_attempts` (5) /
+   `rate_limit.login_window_secs` (900), `0` disables. The recommended
+   ordering is respected: exhausting the account budget blocks even when the
+   address rotates. General API traffic still relies on the reverse proxy;
+   `rate_limit.per_user_rps` / `per_ip_rps` remain unimplemented.
 7. **Branding**: project name confirmed as `Picroom`? Logo? **Recommended**:
    ship without logo in v1. **Resolved**: shipped without logo; client
    window title is "Picroom Admin".

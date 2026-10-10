@@ -71,6 +71,11 @@ per_user_rps = 10
 per_user_burst = 20
 per_ip_rps = 50
 per_ip_burst = 100
+# Auth endpoints only (login + OIDC start). Every attempt counts against the
+# client address and the account; over budget answers 429 + Retry-After.
+# Set login_max_attempts = 0 to disable.
+login_max_attempts = 5
+login_window_secs = 900
 
 [audit]
 retention_days = 365

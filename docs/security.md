@@ -94,7 +94,7 @@ These are documented gaps, not silent failures:
 | **DeleteService** | Wired. The HTTP `DELETE` handler routes through the unified `DeleteService` (storage removal + DB soft-delete + audit event). |
 | **OIDC / SSO** | Implemented — `GET /auth/oidc/:provider/{login,callback}`; id_token verified against the provider JWKS (RS256/ES256), `state`+`nonce` CSRF binding, accounts auto-provisioned as `viewer` (or `admin` via `auth.oidc.admin_emails` allowlist). |
 | **`admin audit tail`** | Implemented — reads `audit_events` for both PostgreSQL and SQLite (`admin/src/audit_cmd.rs`); `--follow` streams new events. |
-| **Rate limiting** | Not implemented at the application layer; rely on the reverse proxy. |
+| **Rate limiting** | Enforced on the unauthenticated auth endpoints — `POST /auth/login` and the OIDC start. A fixed-window counter counts every attempt against both the client address and the account, so one host cannot spray many accounts and a distributed spray cannot hammer a single one. Over budget answers `429` with `Retry-After`. Thresholds: `rate_limit.login_max_attempts` (5) / `rate_limit.login_window_secs` (900); `0` disables. **Not** enforced for ordinary API traffic — `rate_limit.per_user_rps` / `per_ip_rps` remain unimplemented, keep the reverse proxy for those. Counters are in-process per replica, and the address comes from `X-Forwarded-For` / `X-Real-IP`, so it is proxy-dependent: the per-account budget is the one that holds even when the app is exposed directly. |
 
 ## 7. Vulnerability & license policy
 

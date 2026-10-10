@@ -112,8 +112,10 @@ paths:
       responses:
         '200':
           description: >
-            Login successful. Returns a bearer token; no cookie is set and no
-            rate limiter exists (spec OQ-6 — rate limiting not implemented).
+            Login successful. Returns a bearer token; no cookie is set.
+            Attempts are counted against the caller's address and the account
+            (spec OQ-6); once `rate_limit.login_max_attempts` is reached within
+            `rate_limit.login_window_secs` the endpoint answers 429.
           content:
             application/json:
               schema:
@@ -130,6 +132,8 @@ paths:
                     description: Token lifetime in seconds.
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/auth/oidc/{provider}/login:
     get:
@@ -149,6 +153,8 @@ paths:
           description: Redirect to OIDC provider
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
   /api/v1/auth/oidc/{provider}/callback:
     get:

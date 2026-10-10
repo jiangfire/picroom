@@ -130,11 +130,29 @@ fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberatel
 
 ## Phase G — Spec gaps: implement or descope
 
-### ⬜ Task G1: auth rate limiting (OQ-6, D-16)
-- `[rate_limit]` config block; fixed-window per-IP+email counters on
-  `POST /api/v1/auth/login` and OIDC start; `429` + `Retry-After`
-- Tests: threshold trip, window reset, per-IP isolation, bypass attempt
-- **Verify**: `cargo test -p picroom-api`; OpenAPI `429` on login is now true
+### ✅ Task G1: auth rate limiting (OQ-6, D-16)
+- Fixed-window counters on `POST /api/v1/auth/login` and the OIDC start,
+  counting **every** attempt (not just failures) against the client address
+  *and* the account. Either bucket over budget answers `429` +
+  `Retry-After`. Counting attempts is what stops a stolen password being used
+  inside the window a failed spray just opened.
+- Thresholds `rate_limit.login_max_attempts` (5) / `login_window_secs` (900);
+  `0` disables. Counted before any credential work, so a request that never
+  reaches the password check still costs budget.
+- Two facts differed from this task's wording: `[rate_limit]` already existed
+  (documented but never enforced anywhere) and OpenAPI had **no** `429` on any
+  endpoint — the reusable `RateLimited` response component was defined and
+  unreferenced, while login's `200` description claimed no rate limiter
+  existed. Both are now true.
+- Known limits, stated rather than hidden: counters are in-process per replica,
+  and the address comes from `X-Forwarded-For` / `X-Real-IP`, so the IP budget
+  is proxy-dependent — the per-account budget is what still holds when the app
+  is exposed directly. General API traffic is still unthrottled at the app
+  layer; `docs/security.md` §6 now says exactly that.
+- **Verify**: 9 unit tests on the counter (threshold, shrinking `Retry-After`,
+  window reset, both isolation directions, key namespacing, disabled) plus 3
+  HTTP-level tests on `/auth/login` (throttle + header, throttling survives a
+  correct password, account budget survives rotating client addresses)
 
 ### ⬜ Task G2: custom roles descope (D-17)
 - spec §10.1 + ADR-0005: built-in four roles are v1's only roles
