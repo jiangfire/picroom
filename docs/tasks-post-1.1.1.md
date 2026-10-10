@@ -3,7 +3,7 @@
 > **Status**: Drafted 2026-10-09
 > **Parent**: [`plan-post-1.1.1.md`](plan-post-1.1.1.md) · **Prior**:
 > v1.0 remediation tasks (P0–P3 ✅; P4 continues here)
-> **Last updated**: 2026-10-09
+> **Last updated**: 2026-10-10
 
 Rule (inherited D-12): every task ships with the test that fails without its
 fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberately deferred
@@ -12,32 +12,50 @@ fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberatel
 
 ## Phase P4 — Coverage 75.32 % → 80 %
 
-### ⬜ Task 4.A: Per-crate coverage visibility (D-13)
+### ✅ Task 4.A: Per-crate coverage visibility (D-13)
 - CI coverage step parses `target/coverage/cobertura.xml`, prints one
-  `crate: covered/total, %` line per workspace crate, uploads the XML artifact
-- **Verify**: coverage job log shows the table; record numbers below
+  `crate: covered/total, %` line per workspace crate (weakest first), and
+  uploads the XML artifact
+- **Verify**: the parser was checked against a fixture mirroring tarpaulin's
+  writer (and its `strip_base_dir` path rules); the real table and numbers
+  still need one CI run on master before they can be recorded in
+  `plan-post-1.1.1.md` §4
 - **Files**: `.github/workflows/ci.yml`
 
-### ⬜ Task 4.B: `crates/admin` → 80 %
-- CLI error paths + exit codes, `config validate` semantic branches,
-  `migrate` status classification
+### 🔄 Task 4.B: `crates/admin` → 80 % *(51.97 % → 69.60 %, ~+74 still needed)*
+- Added: audit tail's SQLite read + corrupt-row tolerance, its missing-table
+  error path, `open_pool` scheme dispatch (SQLite accept / unknown scheme),
+  `migrate status` against an unmigrated DB, `migrate run`'s surfaced error,
+  and the three missing `config validate` guards (`max_connections`,
+  `quality.webp`, `jwt_ttl_secs`) — 27 tests, clippy/fmt clean
+- The remaining ~74 lines are `*_pg` functions (`team_create_pg`,
+  `user_list_pg`, `audit_list_pg`, …). No test can reach them without a live
+  PostgreSQL, and the CI coverage job runs without one — see the open
+  question in `plan-post-1.1.1.md` §4
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.C: `crates/audit` → 80 %
-- DB sink error paths, reader `limit`/`before` edges, redaction
+### ⬜ Task 4.C: `crates/audit` → 80 % *(measured 76.81 %, needs ~5 lines)*
+- DB sink error paths, reader `limit`/`before` edges, redaction — pick the
+  few that are cheap, not the whole list
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.D: `crates/imaging` → 80 %
-- 1-px / extreme-aspect resize, probe rejections, quality clamps
+### ✅ Task 4.D: `crates/imaging` → 80 % *(measured 91.48 % — no backfill needed)*
+- The plan assumed imaging was ~56 % weak; it is already far above the floor,
+  so the resize/probe/quality-clamp backfill is dropped
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.E: `crates/api` handler branches
+### ⬜ Task 4.E: `crates/api` handler branches *(measured 71.42 %, needs ~+153)*
 - 403/404 mapping on all routes, multipart error paths, admin validation
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.F: remaining crates to the floor
-- s3compat ~91 % already; top up worker/service/storage/domain per the 4.A table
+### ⬜ Task 4.F: remaining crates to the floor *(service 69.86 %, needs ~+117)*
+- infra/worker/storage/auth/domain/s3compat all clear 80 % already
+- **service** is the gap the original list missed; worker/storage/domain need
+  nothing
 - **Verify**: per-crate table ≥ 80 % everywhere
+
+> Per-crate numbers: `plan-post-1.1.1.md` §4 (local `cargo-llvm-cov`; the CI
+> job's tarpaulin table confirms them once 4.A has run there).
 
 ### ⬜ Task 4.G: flip the gate (D-14)
 - `--fail-under 80` + per-crate floors in `.github/workflows/ci.yml`;
