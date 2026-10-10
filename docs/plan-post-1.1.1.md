@@ -3,7 +3,7 @@
 > **Status**: Drafted 2026-10-09
 > **Parent**: v1.0 remediation tasks (closed with v1.1.1; P4 continues here) ·
 > **Baseline**: v1.1.1 (`817344b`), CI fully green
-> **Last updated**: 2026-10-09
+> **Last updated**: 2026-10-10
 
 ## 1. Overview
 
@@ -144,14 +144,57 @@ Guiding constraints (inherited from `plan-remediation-v1.md`):
 - [ ] Custom roles and SQLite layer explicitly descoped in spec/ADR-0005
 - [ ] No doc sentence in the repo claims an unimplemented feature
 
-## 4. Current coverage snapshot (2026-10-09, run 37926162262)
+## 4. Current coverage snapshot
+
+**CI (tarpaulin, 2026-10-09, run 37926162262)** — the authoritative number:
 
 | Metric | Value |
 |---|---|
 | Overall lines | **75.32 %** (5369/7128) |
 | Gap to 80 % | ≈ 333 net-new covered lines |
-| Old per-crate weak spots (pre-fix baseline) | admin 48 %, audit 53 %, api 54 %, imaging 56 % |
-| Current per-crate | unknown — Task 4.A first |
+
+**Local per-crate (cargo-llvm-cov, 2026-10-10)** — measured with
+`cargo llvm-cov --workspace --locked`, `tests/`, `benches/` and `bin/` excluded
+to match the CI job's denominator rules:
+
+| Crate | Lines | % | To 80 % |
+|---|---|---|---|
+| admin | 357/687 | 51.97 | **+193** |
+| service | 802/1148 | 69.86 | **+117** |
+| api | 1272/1781 | 71.42 | **+153** |
+| audit | 106/138 | 76.81 | +5 |
+| infra | 269/326 | 82.52 | — |
+| worker | 626/753 | 83.13 | — |
+| storage | 570/682 | 83.58 | — |
+| auth | 795/915 | 86.89 | — |
+| imaging | 290/317 | 91.48 | — |
+| s3compat | 1234/1327 | 92.99 | — |
+| domain | 371/397 | 93.45 | — |
+| **total** | **6692/8471** | **79.00 %** | — |
+
+These are **not** the CI numbers: llvm-cov and tarpaulin count coverable lines
+differently (8471 vs 7128), so the absolute percentages will not match. Use
+this table to decide *where* to spend effort and the CI job for *whether* the
+gate is met.
+
+Two baseline assumptions in this plan are now known to be stale:
+
+- **audit (4.C) is at 76.81 %, not ~53 %** — it needs ~5 lines, not a backfill.
+- **imaging (4.D) is at 91.48 %, not ~56 %** — already above the floor.
+- **service was not named as weak but is the second-largest gap (+117).**
+
+Tarpaulin cannot produce a report on a developer Windows box (tests run fine,
+but profraw merging fails with `parser failure: Nom(Satisfy)` because its
+engines target Unix), so `cargo-llvm-cov` is how per-crate numbers are measured
+before a CI run confirms them.
+
+### Open question: the coverage job had no PostgreSQL — resolved
+
+`coverage` had no `services:` block and no `DATABASE_URL`, so every `pg_gated`
+test skipped and the whole `*_pg` surface was unreachable; in `admin` that was
+~74 lines after the 4.B work, with `service` (+117) and `api` (+153) in the same
+shape. The job now gets the same `postgres:16` service and a migrated schema as
+the `test` job, so those paths execute and their coverage is real.
 
 ## 5. Risks and Mitigations
 
