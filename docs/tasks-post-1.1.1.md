@@ -16,46 +16,49 @@ fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberatel
 - CI coverage step parses `target/coverage/cobertura.xml`, prints one
   `crate: covered/total, %` line per workspace crate (weakest first), and
   uploads the XML artifact
-- **Verify**: the parser was checked against a fixture mirroring tarpaulin's
-  writer (and its `strip_base_dir` path rules); the real table and numbers
-  still need one CI run on master before they can be recorded in
+- **Verify**: confirmed on CI run 38056694504 — the table printed, and its
+  sum matched tarpaulin's own total (5582/7252 both ways), so the crate
+  attribution holds against real `strip_base_dir` output. Numbers recorded in
   `plan-post-1.1.1.md` §4
 - **Files**: `.github/workflows/ci.yml`
 
-### 🔄 Task 4.B: `crates/admin` → 80 % *(51.97 % → 69.60 %, ~+74 still needed)*
+### 🔄 Task 4.B: `crates/admin` → 80 % *(CI: 75.98 % after the work below, +20 to go)*
 - Added: audit tail's SQLite read + corrupt-row tolerance, its missing-table
   error path, `open_pool` scheme dispatch (SQLite accept / unknown scheme),
-  `migrate status` against an unmigrated DB, `migrate run`'s surfaced error,
-  and the three missing `config validate` guards (`max_connections`,
-  `quality.webp`, `jwt_ttl_secs`) — 27 tests, clippy/fmt clean
-- The remaining ~74 lines are `*_pg` functions (`team_create_pg`,
-  `user_list_pg`, `audit_list_pg`, …). No test can reach them without a live
-  PostgreSQL, and the CI coverage job runs without one — see the open
-  question in `plan-post-1.1.1.md` §4
+  `migrate status` against an unmigrated DB, and the three missing
+  `config validate` guards (`max_connections`, `quality.webp`,
+  `jwt_ttl_secs`) — 27 tests, clippy/fmt clean
+- The `*_pg` functions (`team_create_pg`, `user_list_pg`, `audit_list_pg`, …)
+  are now reachable: the coverage job has a migrated PostgreSQL. Writing those
+  tests is what closes the last ~20 lines
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.C: `crates/audit` → 80 % *(measured 76.81 %, needs ~5 lines)*
-- DB sink error paths, reader `limit`/`before` edges, redaction — pick the
-  few that are cheap, not the whole list
+### 🔄 Task 4.C: `crates/audit` → 80 % *(CI: 41.98 % — the worst crate)*
+- DB sink error paths, reader `limit`/`before` edges, redaction
+- Needs ~+31 lines. A local cargo-llvm-cov reading suggested only ~5 were
+  needed; the CI table is the one that counts
 - **Verify**: per-crate table ≥ 80 %
 
-### ✅ Task 4.D: `crates/imaging` → 80 % *(measured 91.48 % — no backfill needed)*
-- The plan assumed imaging was ~56 % weak; it is already far above the floor,
-  so the resize/probe/quality-clamp backfill is dropped
+### ✅ Task 4.D: `crates/imaging` → 80 % *(CI: 95.24 % — no backfill needed)*
+- The plan assumed imaging was ~56 % weak; it clears the floor comfortably, so
+  the resize/probe/quality-clamp backfill is dropped
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.E: `crates/api` handler branches *(measured 71.42 %, needs ~+153)*
-- 403/404 mapping on all routes, multipart error paths, admin validation
+### ✅ Task 4.E: `crates/api` handler branches *(CI: 85.56 % — already above)*
+- No backfill required; 403/404 mapping, multipart error paths and admin
+  validation are already covered
 - **Verify**: per-crate table ≥ 80 %
 
-### ⬜ Task 4.F: remaining crates to the floor *(service 69.86 %, needs ~+117)*
-- infra/worker/storage/auth/domain/s3compat all clear 80 % already
-- **service** is the gap the original list missed; worker/storage/domain need
-  nothing
+### ⬜ Task 4.F: remaining crates to the floor
+- **service 56.21 % is the whole remaining problem (~+314 lines)** — it was not
+  in the original list at all
+- small top-ups: storage +19, admin +20, infra +10
+- s3compat, domain, worker, auth already clear the floor
 - **Verify**: per-crate table ≥ 80 % everywhere
 
-> Per-crate numbers: `plan-post-1.1.1.md` §4 (local `cargo-llvm-cov`; the CI
-> job's tarpaulin table confirms them once 4.A has run there).
+> Numbers: `plan-post-1.1.1.md` §4 (CI run 38056694504). A local
+> cargo-llvm-cov run disagreed sharply with tarpaulin (audit 76.81 % vs
+> 41.98 %, api 71.42 % vs 85.56 %) — target off the CI table, not the proxy.
 
 ### ⬜ Task 4.G: flip the gate (D-14)
 - `--fail-under 80` + per-crate floors in `.github/workflows/ci.yml`;
@@ -63,7 +66,9 @@ fix. Legend: ⬜ not started · 🔄 in progress · ✅ done · 🔲 deliberatel
 - **Verify**: gate green on two consecutive master runs before merging
 
 ### Checkpoint P4
-- [ ] Per-crate table in CI log; every crate ≥ 80 %; gate at 80 %
+- [x] Per-crate table in CI log (confirmed, run 38056694504)
+- [ ] every crate ≥ 80 % — outstanding: audit, service, infra, admin, storage
+- [ ] gate at 80 %
 - [ ] `spec.md` S5 matches reality; remediation P4 fully closed
 
 ---
