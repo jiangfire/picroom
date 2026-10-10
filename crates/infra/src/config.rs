@@ -308,6 +308,11 @@ pub struct RateLimitConfig {
     pub per_ip_rps: u32,
     /// Per-IP burst.
     pub per_ip_burst: u32,
+    /// Auth attempts allowed per window, counted against both the client IP
+    /// and the account. `0` disables the limiter.
+    pub login_max_attempts: u32,
+    /// Length of the auth rate-limit window, in seconds.
+    pub login_window_secs: u64,
 }
 
 impl Default for RateLimitConfig {
@@ -317,6 +322,10 @@ impl Default for RateLimitConfig {
             per_user_burst: 20,
             per_ip_rps: 50,
             per_ip_burst: 100,
+            // Five attempts a quarter of an hour: comfortably above a human
+            // signing in, far below a password-spray.
+            login_max_attempts: 5,
+            login_window_secs: 900,
         }
     }
 }

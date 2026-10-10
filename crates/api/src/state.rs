@@ -3,6 +3,7 @@
 
 //! Application state shared across handlers.
 
+use crate::rate_limit::AuthRateLimiter;
 use async_trait::async_trait;
 use bytes::Bytes;
 use picroom_audit::{AuditReader, AuditSink};
@@ -80,6 +81,8 @@ pub struct AppState {
     /// Authorization coordinator shared by the service layer and the ACL
     /// endpoints.
     pub authz: Arc<AuthzService>,
+    /// Throttles the unauthenticated auth endpoints (login, OIDC start).
+    pub auth_rate_limiter: Arc<AuthRateLimiter>,
 }
 
 impl JwtProvider for AppState {
@@ -149,7 +152,17 @@ impl AppState {
             session_repo: None,
             acl_repo: None,
             authz: Arc::new(AuthzService::without_backends()),
+            // Dev/test wiring makes many logins in a short window, so it gets
+            // an inert limiter; production wiring sets the real thresholds.
+            auth_rate_limiter: Arc::new(AuthRateLimiter::disabled()),
         }
+    }
+
+    /// Sets the auth endpoint rate limiter.
+    #[must_use]
+    pub fn with_auth_rate_limiter(mut self, limiter: Arc<AuthRateLimiter>) -> Self {
+        self.auth_rate_limiter = limiter;
+        self
     }
 
     /// Attaches the session repository (PostgreSQL-backed).

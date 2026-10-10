@@ -23,6 +23,35 @@ use std::sync::Arc;
 /// Cookie used to carry the OIDC `state`/`nonce` binding across the redirect.
 const OIDC_STATE_COOKIE: &str = "oidc_state";
 
+/// Identifies the caller for rate-limiting purposes.
+///
+/// The app sits behind a reverse proxy in every supported deployment, so the
+/// forwarding headers are what actually carry the client address. They are
+/// also client-controllable when the app is exposed directly, which makes the
+/// per-IP budget best-effort — the per-account budget is the one that actually
+/// bounds a password spray. Callers we cannot place fall into a single shared
+/// bucket rather than escaping the limit.
+fn client_key(headers: &axum::http::HeaderMap) -> String {
+    let forwarded = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    if let Some(ip) = forwarded {
+        return ip.to_string();
+    }
+    if let Some(real) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return real.to_string();
+    }
+    "unknown".to_string()
+}
+
 /// Records an auth audit event (best-effort: failures are logged, not fatal).
 async fn audit_auth(
     state: &AppState,
@@ -58,8 +87,22 @@ async fn audit_auth(
 /// valid emails via timing or response shape.
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Counted before the credentials are examined: a request that never
+    // reaches the password check must still cost the caller budget, or the
+    // limiter would only see valid-looking traffic.
+    if let Some(retry_after) = state
+        .auth_rate_limiter
+        .record(&client_key(&headers), &body.email)
+    {
+        return Err(ApiError::too_many_requests(
+            retry_after,
+            "too many authentication attempts",
+        ));
+    }
+
     let Some(user_repo) = &state.user_repo else {
         return Err(ApiError::internal("user repository not configured"));
     };
@@ -192,8 +235,23 @@ pub async fn logout(
 pub async fn oidc_login(
     State(state): State<Arc<AppState>>,
     Path(provider): Path<String>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
 ) -> Result<impl IntoResponse, ApiError> {
+    // The OIDC start endpoint is unauthenticated too, and each call costs a
+    // discovery round-trip to the identity provider, so it shares the login
+    // budget. Keyed on the provider because that is the only "account" known
+    // before the browser comes back with an identity.
+    if let Some(retry_after) = state
+        .auth_rate_limiter
+        .record(&client_key(&headers), &format!("oidc:{provider}"))
+    {
+        return Err(ApiError::too_many_requests(
+            retry_after,
+            "too many authentication attempts",
+        ));
+    }
+
     let cfg = state
         .oidc_providers
         .get(&provider)

@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use picroom_api::rate_limit::AuthRateLimiter;
 use picroom_api::AppState;
 use picroom_audit::NoopAuditSink;
 use picroom_domain::{
@@ -307,6 +308,12 @@ const PASSWORD: &str = "correct-horse-battery-staple";
 /// seeded with one enabled admin (`alice@example.com`) and one disabled user
 /// (`bob@example.com`), both with the same known password.
 fn login_app() -> axum::Router {
+    login_app_with_limiter(0)
+}
+
+/// [`login_app`] with the auth rate limiter armed at `login_max_attempts`
+/// attempts per 15 minutes. `0` leaves it inert, as the dev wiring does.
+fn login_app_with_limiter(login_max_attempts: u32) -> axum::Router {
     let tmp = tempdir();
     let storage = Arc::new(LocalDriver::new(tmp, "/i"));
     let audit = Arc::new(NoopAuditSink);
@@ -336,12 +343,27 @@ fn login_app() -> axum::Router {
         users,
         all_users: vec![],
     });
-    let state = Arc::new(AppState::for_dev(storage, audit).with_user_repo(repo));
+    let state = Arc::new(
+        AppState::for_dev(storage, audit)
+            .with_user_repo(repo)
+            .with_auth_rate_limiter(Arc::new(AuthRateLimiter::new(login_max_attempts, 900))),
+    );
     picroom_api::build_router(state)
 }
 
 async fn post_login(app: axum::Router, email: &str, password: &str) -> (StatusCode, Value) {
-    use axum::http::header::CONTENT_TYPE;
+    let (status, _, json) = post_login_as(app, email, password, "203.0.113.7").await;
+    (status, json)
+}
+
+/// [`post_login`] from a named client, also surfacing the `Retry-After` header.
+async fn post_login_as(
+    app: axum::Router,
+    email: &str,
+    password: &str,
+    client: &str,
+) -> (StatusCode, Option<String>, Value) {
+    use axum::http::header::{CONTENT_TYPE, RETRY_AFTER};
     let body = serde_json::json!({ "email": email, "password": password }).to_string();
     let response = app
         .oneshot(
@@ -349,15 +371,82 @@ async fn post_login(app: axum::Router, email: &str, password: &str) -> (StatusCo
                 .method("POST")
                 .uri("/api/v1/auth/login")
                 .header(CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", client)
                 .body(Body::from(body))
                 .unwrap(),
         )
         .await
         .unwrap();
     let status = response.status();
+    let retry_after = response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    (status, json)
+    (status, retry_after, json)
+}
+
+#[tokio::test]
+async fn failed_logins_are_throttled_after_the_configured_attempts() {
+    let app = login_app_with_limiter(2);
+    let email = "alice@example.com";
+
+    // Inside the budget the handler still does its job and answers 401.
+    let (status, retry_after, _) = post_login_as(app.clone(), email, "wrong", "203.0.113.7").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(retry_after.is_none(), "no Retry-After before throttling");
+
+    let (status, retry_after, _) = post_login_as(app.clone(), email, "wrong", "203.0.113.7").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(retry_after.is_none());
+
+    // The next attempt exceeds the budget.
+    let (status, retry_after, json) =
+        post_login_as(app.clone(), email, "wrong", "203.0.113.7").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {json}");
+    assert_eq!(json["code"], "too_many_requests");
+    let secs: u64 = retry_after
+        .expect("a throttled response must say how long to wait")
+        .parse()
+        .expect("Retry-After is whole seconds");
+    assert!(
+        (1..=900).contains(&secs),
+        "Retry-After out of range: {secs}"
+    );
+}
+
+#[tokio::test]
+async fn throttling_survives_a_correct_password() {
+    let app = login_app_with_limiter(2);
+    for _ in 0..2 {
+        let (status, _, _) =
+            post_login_as(app.clone(), "alice@example.com", "wrong", "203.0.113.7").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // The budget is spent on attempts, not on failures, so a stolen password
+    // still cannot be used while the window is open.
+    let (status, _, json) = post_login_as(app, "alice@example.com", PASSWORD, "203.0.113.7").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {json}");
+}
+
+#[tokio::test]
+async fn account_budget_survives_changing_client_addresses() {
+    let app = login_app_with_limiter(2);
+    let email = "alice@example.com";
+
+    // Two different source addresses: each gets its own IP budget...
+    let (status, _, _) = post_login_as(app.clone(), email, "wrong", "203.0.113.7").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = post_login_as(app.clone(), email, "wrong", "198.51.100.4").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // ...but the account they both target is out of budget, so rotating the
+    // source address does not buy an attacker more guesses.
+    let (status, retry_after, _) = post_login_as(app.clone(), email, "wrong", "192.0.2.9").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry_after.is_some());
 }
 
 #[tokio::test]

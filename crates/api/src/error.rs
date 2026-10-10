@@ -19,6 +19,8 @@ pub struct ApiError {
     pub message: String,
     /// Optional request id for tracing.
     pub request_id: Option<String>,
+    /// Seconds to wait before retrying; emitted as `Retry-After` on a 429.
+    pub retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -29,6 +31,7 @@ impl ApiError {
             code,
             message: message.into(),
             request_id: None,
+            retry_after: None,
         }
     }
 
@@ -62,6 +65,17 @@ impl ApiError {
         Self::new(StatusCode::PAYLOAD_TOO_LARGE, "quota_exceeded", message)
     }
 
+    /// 429 Too Many Requests, carrying `Retry-After`.
+    ///
+    /// The wait is part of the contract: a client told to back off but not for
+    /// how long will retry immediately and stay throttled.
+    #[must_use]
+    pub fn too_many_requests(retry_after_secs: u64, message: impl Into<String>) -> Self {
+        let mut err = Self::new(StatusCode::TOO_MANY_REQUESTS, "too_many_requests", message);
+        err.retry_after = Some(retry_after_secs);
+        err
+    }
+
     /// 500 Internal Server Error.
     ///
     /// The detail is **logged server-side only**; clients always receive a
@@ -92,7 +106,15 @@ impl IntoResponse for ApiError {
             "message": self.message,
             "request_id": self.request_id,
         }));
-        (self.status, body).into_response()
+        let mut response = (self.status, body).into_response();
+        if let Some(secs) = self.retry_after {
+            if let Ok(value) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }
 

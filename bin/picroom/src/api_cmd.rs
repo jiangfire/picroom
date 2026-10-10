@@ -170,6 +170,11 @@ pub async fn run(config: Option<PathBuf>, bind_override: Option<String>) -> anyh
         session_repo,
         acl_repo,
         authz,
+        // Brute-force protection for the unauthenticated auth endpoints.
+        auth_rate_limiter: Arc::new(picroom_api::rate_limit::AuthRateLimiter::new(
+            cfg.rate_limit.login_max_attempts,
+            cfg.rate_limit.login_window_secs,
+        )),
     });
 
     // Build router with body size limit.
