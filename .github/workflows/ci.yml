@@ -97,29 +97,103 @@ jobs:
   # ---------------------------------------------------------------------
   #
   # The spec calls for ≥ 80 % line coverage, but the workspace currently sits
-  # at ~59 % (measured 2026-07-09). Rather than block every merge on an
-  # unmet target, this job enforces an INTERIM floor while we grow
+  # at ~75 % (measured 2026-10-09, run 37926162262). Rather than block every
+  # merge on an unmet target, this job enforces an INTERIM floor while we grow
   # coverage toward the spec target. Remediation plan (tracked in
-  # docs/plan-post-1.1.1.md): add integration tests for s3compat (object/list/
-  # multipart), storage drivers (s3/minio), api handlers (teams/admin), the
-  # worker pipeline, and infra; raise the floor in steps (50 → 65 → 80) as
-  # each area is covered. The `bin/` CLI entry points are excluded from the
-  # denominator (they are thin wiring, not unit-tested).
+  # docs/plan-post-1.1.1.md): backfill the crates the per-crate table below
+  # shows below the floor, then raise the gate 65 → 80 once every crate holds
+  # ≥ 80 % for two consecutive runs. The `bin/` CLI entry points are excluded
+  # from the denominator (they are thin wiring, not unit-tested).
+  #
+  # Tarpaulin only reports the workspace total, so the "Per-crate coverage"
+  # step parses cobertura.xml and prints the per-crate breakdown into the job
+  # log (D-13) — that table is what tells us which crate to backfill next.
   coverage:
     name: coverage
     runs-on: ubuntu-latest
     needs: test
+    # A migrated PostgreSQL so the DB-facing code actually executes: without
+    # DATABASE_URL every pg_gated test skips and the whole `*_pg` surface
+    # (admin's user/team/audit commands, the service repository layer, the
+    # api handlers' persistence) is invisible to the per-crate table below —
+    # which is exactly the surface that has to clear the 80 % floor.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: picroom
+          POSTGRES_PASSWORD: picroom_test
+          POSTGRES_DB: picroom_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U picroom -d picroom_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://picroom:picroom_test@localhost:5432/picroom_test
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin --locked
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+      - name: Run migrations (PG)
+        run: sqlx migrate run --source migrations
       # Interim floor (see job header). 60 → 65 after the v1.0 remediation
       # added handler/service/worker/ACL tests; 80 % remains the spec target
       # (docs/plan-post-1.1.1.md P4).
       - name: Run coverage
         run: cargo tarpaulin --workspace --fail-under 65 --exclude-files 'bin/**' --out Xml --output-dir target/coverage
+      - name: Per-crate coverage
+        run: |
+          python3 - <<'PY'
+          import re
+          import xml.etree.ElementTree as ET
+
+          # Tarpaulin's <package name> is the source *directory* of the files
+          # (crates/api/src), not the crate, so the crate is derived from each
+          # class' workspace-relative <class filename> instead.
+          CRATE = re.compile(r"^(?:crates|bin)/([^/]+)/")
+
+          root = ET.parse("target/coverage/cobertura.xml").getroot()
+          stats = {}
+          for cls in root.iter("class"):
+              match = CRATE.match((cls.get("filename") or "").replace("\\", "/"))
+              crate = match.group(1) if match else "(other)"
+              covered, valid = stats.get(crate, (0, 0))
+              for line in cls.findall("./lines/line"):
+                  valid += 1
+                  if int(line.get("hits", "0")) > 0:
+                      covered += 1
+              stats[crate] = (covered, valid)
+
+          # Weakest crate first: the table exists to answer "what do we
+          # backfill next?", so the lowest numbers must not scroll off.
+          rows = sorted(
+              ((crate, c, v) for crate, (c, v) in stats.items() if v),
+              key=lambda row: row[1] / row[2],
+          )
+          width = max((len(crate) for crate, _, _ in rows), default=6)
+          print(f"{'crate'.ljust(width)}   covered/total   lines")
+          for crate, covered, valid in rows:
+              print(f"{crate.ljust(width)}   {covered:>6}/{valid:<6}   {100.0 * covered / valid:6.2f} %")
+
+          summed = sum(c for _, c, _ in rows), sum(v for _, _, v in rows)
+          reported = int(root.get("lines-covered")), int(root.get("lines-valid"))
+          print(f"\nper-crate sum: {summed[0]}/{summed[1]} = {100.0 * summed[0] / summed[1]:.2f} %")
+          print(f"tarpaulin:     {reported[0]}/{reported[1]}")
+          if summed != reported:
+              print("::warning::per-crate table does not sum to the tarpaulin total")
+          PY
+      - name: Upload cobertura report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura
+          path: target/coverage/cobertura.xml
+          if-no-files-found: error
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:
