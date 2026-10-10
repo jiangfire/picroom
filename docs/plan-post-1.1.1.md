@@ -93,8 +93,9 @@ Guiding constraints (inherited from `plan-remediation-v1.md`):
 
 ### Checkpoint P4
 
-- [ ] CI coverage job log prints per-crate table
-- [ ] Every crate ≥ 80 % lines; overall ≥ 80 %
+- [x] CI coverage job log prints per-crate table (run 38056694504)
+- [ ] Every crate ≥ 80 % lines; overall ≥ 80 % — outstanding: audit 41.98 %,
+      service 56.21 %, infra 71.15 %, admin 75.98 %, storage 77.25 %
 - [ ] Gate at 80 % green on two consecutive master runs
 - [ ] `spec.md` S5 matches reality; `tasks-remediation-v1.md` P4 closed
 
@@ -146,55 +147,58 @@ Guiding constraints (inherited from `plan-remediation-v1.md`):
 
 ## 4. Current coverage snapshot
 
-**CI (tarpaulin, 2026-10-09, run 37926162262)** — the authoritative number:
-
-| Metric | Value |
-|---|---|
-| Overall lines | **75.32 %** (5369/7128) |
-| Gap to 80 % | ≈ 333 net-new covered lines |
-
-**Local per-crate (cargo-llvm-cov, 2026-10-10)** — measured with
-`cargo llvm-cov --workspace --locked`, `tests/`, `benches/` and `bin/` excluded
-to match the CI job's denominator rules:
+**CI (tarpaulin, 2026-10-10, run 38056694504)** — authoritative. Measured with
+the coverage job's migrated PostgreSQL, so the `*_pg` paths are included:
 
 | Crate | Lines | % | To 80 % |
 |---|---|---|---|
-| admin | 357/687 | 51.97 | **+193** |
-| service | 802/1148 | 69.86 | **+117** |
-| api | 1272/1781 | 71.42 | **+153** |
-| audit | 106/138 | 76.81 | +5 |
-| infra | 269/326 | 82.52 | — |
-| worker | 626/753 | 83.13 | — |
-| storage | 570/682 | 83.58 | — |
-| auth | 795/915 | 86.89 | — |
-| imaging | 290/317 | 91.48 | — |
-| s3compat | 1234/1327 | 92.99 | — |
-| domain | 371/397 | 93.45 | — |
-| **total** | **6692/8471** | **79.00 %** | — |
+| audit | 34/81 | 41.98 | **+31** |
+| service | 742/1320 | 56.21 | **+314** |
+| infra | 74/104 | 71.15 | +10 |
+| admin | 367/483 | 75.98 | +20 |
+| storage | 516/668 | 77.25 | +19 |
+| s3compat | 300/366 | 81.97 | — |
+| domain | 96/115 | 83.48 | — |
+| worker | 501/592 | 84.63 | — |
+| api | 2458/2873 | 85.56 | — |
+| auth | 394/460 | 85.65 | — |
+| imaging | 100/105 | 95.24 | — |
+| *(other)* | 0/85 | 0.00 | — |
+| **total** | **5582/7252** | **76.97 %** | +220 |
 
-These are **not** the CI numbers: llvm-cov and tarpaulin count coverable lines
-differently (8471 vs 7128), so the absolute percentages will not match. Use
-this table to decide *where* to spend effort and the CI job for *whether* the
-gate is met.
+`*(other)*` is the Tauri desktop client — `desktop/src-tauri/src/commands/upload.rs`
+(52 lines) and `desktop/src-tauri/src/store.rs` (33 lines), both untested. It is
+not a workspace crate, so it never affects a per-crate floor; whether it should
+join `bin/**` in `--exclude-files` is an open call, not a measurement problem.
 
-Two baseline assumptions in this plan are now known to be stale:
+Overall moved 75.32 % → 76.97 % against a slightly smaller denominator (7128 →
+7252): giving the job a database added covered lines while dropping `bin/**`
+rows that the earlier run had counted.
 
-- **audit (4.C) is at 76.81 %, not ~53 %** — it needs ~5 lines, not a backfill.
-- **imaging (4.D) is at 91.48 %, not ~56 %** — already above the floor.
-- **service was not named as weak but is the second-largest gap (+117).**
+**Local proxy (cargo-llvm-cov)** is no longer recorded here. It disagreed with
+tarpaulin badly enough to misdirect the work — audit read 76.81 % against
+tarpaulin's 41.98 %, api read 71.42 % against 85.56 %. The two tools count
+coverable lines very differently (audit 138 vs 81, api 1781 vs 2873), so a local
+proxy is not a usable substitute for the CI table; read the table the coverage
+job prints.
 
 Tarpaulin cannot produce a report on a developer Windows box (tests run fine,
 but profraw merging fails with `parser failure: Nom(Satisfy)` because its
-engines target Unix), so `cargo-llvm-cov` is how per-crate numbers are measured
-before a CI run confirms them.
+engines target Unix), which is why per-crate data now comes from the CI log.
 
 ### Open question: the coverage job had no PostgreSQL — resolved
 
 `coverage` had no `services:` block and no `DATABASE_URL`, so every `pg_gated`
-test skipped and the whole `*_pg` surface was unreachable; in `admin` that was
-~74 lines after the 4.B work, with `service` (+117) and `api` (+153) in the same
-shape. The job now gets the same `postgres:16` service and a migrated schema as
-the `test` job, so those paths execute and their coverage is real.
+test skipped and the whole `*_pg` surface was unreachable. The job now gets the
+same `postgres:16` service and a migrated schema as the `test` job, so those
+paths execute and their coverage is real.
+
+That change immediately exposed a latent defect: `pg_gated::ensure_schema`
+creates its tables with `CREATE TABLE IF NOT EXISTS`, so once migrations have
+run those statements are no-ops and the suite silently starts testing the
+production schema instead of its own fixtures — a different `storage_policy`
+default, plus a foreign key on `owner_id` its fake UUID does not satisfy. The
+fixtures now live in their own `pg_gated_test` schema (see commit `998b51d`).
 
 ## 5. Risks and Mitigations
 
